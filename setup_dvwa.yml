@@ -89,10 +89,18 @@
             - config
             - external/phpids/lib/IDS/tmp
 
-    # 💡 修正 3：(講師加碼) 打通 File Inclusion 漏洞的 PHP 限制
+    # 💡 修正：先用 Shell 指令動態找出 Debian 系統真實的 php.ini 路徑
+    - name: 5.4 動態尋找 Debian 體系的 php.ini 路徑
+      ansible.builtin.shell: ls /etc/php/*/apache2/php.ini | head -n 1
+      register: debian_php_ini_path
+      when: ansible_os_family == 'Debian'
+      changed_when: false # 告訴 Ansible 這只是一個查詢動作，不要亮黃色 changed
+
+    # 💡 修正：將找出的路徑變數注入到 replace 模組中
     - name: 5.5 開啟 PHP allow_url_include (LFI/RFI 實驗必備)
       ansible.builtin.replace:
-        path: "{{ (ansible_os_family == 'Debian') | ternary('/etc/php/8.3/apache2/php.ini', '/etc/php.ini') }}"
+        # 使用 Jinja2 判斷式：如果是 Debian 就用剛剛查到的路徑，否則就用 RedHat 預設的 /etc/php.ini
+        path: "{{ debian_php_ini_path.stdout if ansible_os_family == 'Debian' else '/etc/php.ini' }}"
         regexp: '^allow_url_include\s*=\s*Off'
         replace: 'allow_url_include = On'
       # 忽略找不到檔案的錯誤 (萬一 Ubuntu 版本不同導致 PHP 路徑變更時不至於中斷)
