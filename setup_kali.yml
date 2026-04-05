@@ -1,0 +1,69 @@
+---
+- name: Kali Linux 實戰環境建置與個人化設定
+  hosts: kali
+  become: yes  # 預設開啟全域提權 (為了執行 apt)
+
+  tasks:
+    # ==========================================
+    # 系統層級任務 (Root 權限執行)
+    # ==========================================
+    - name: 1, 3, 6, 7a. 更新 APT 套件庫並安裝必備軟體
+      ansible.builtin.apt:
+        name:
+          - seclists
+          - feroxbuster
+          - wordlists
+        update_cache: yes
+        state: present
+      # 💡 說明：在 Kali 裡，seclists, feroxbuster 和 rockyou 的壓縮檔
+      # 都已經直接包在官方 repo 裡，用 apt 裝是最穩定的。
+
+    - name: 7b. 解壓縮 rockyou.txt (若尚未解壓縮)
+      ansible.builtin.command:
+        cmd: gunzip -k /usr/share/wordlists/rockyou.txt.gz
+      args:
+        creates: /usr/share/wordlists/rockyou.txt
+      # 💡 說明：args: creates 是 Ansible 實現冪等性的神兵利器！
+      # 如果系統發現 rockyou.txt 已經存在，就會直接回報 OK 並跳過解壓縮。
+      
+    - name: 讀取靶機上 vagrant 的 authorized_keys 內容
+      ansible.builtin.slurp:
+        src: /home/vagrant/.ssh/authorized_keys
+      register: vagrant_keys
+      # 💡 說明：slurp 模組專門用來讀取遠端機器的檔案內容，並將其存在變數中。
+
+    - name: 安全地將金鑰注入 kali 的信任清單 (不覆蓋現有金鑰)
+      ansible.posix.authorized_key:
+        user: kali
+        state: present
+        key: "{{ vagrant_keys['content'] | b64decode }}"
+      # 💡 說明：authorized_key 模組天生具備完美的冪等性。
+      # 它會檢查該字串是否已經存在，如果沒有就「附加 (Append)」在最後一行；
+      # 如果已經有了，就什麼都不做，絕對不會動到原本的其他金鑰。
+      
+    # ==========================================
+    # 使用者層級任務 (切換為 kali 帳號執行)
+    # ==========================================
+    - name: 2 & 4. 設定 kali 使用者的 .vimrc (取消滑鼠、新增垂直光棒)
+      ansible.builtin.blockinfile:
+        path: /home/kali/.vimrc
+        create: yes
+        owner: kali  # 確保檔案擁有者是 kali，而不是 root
+        group: kali
+        mode: '0644'
+        block: |
+          " 取消 vi/vim 滑鼠點選功能 (避免終端機複製貼上時被干擾)
+          set mouse=
+          
+          " 新增垂直的對齊光棒 (Cursor Column)
+          set cursorcolumn
+          
+          " (講師加碼推薦：開啟語法高亮與行號)
+          syntax on
+          set number
+
+    - name: 5. 將 kali 使用者的 Git 預設編輯器改為 vim
+      become_user: kali  # 關鍵：將執行身分從 root 降級為 kali
+      ansible.builtin.command:
+        cmd: git config --global core.editor "vim"
+      # 💡 說明：透過 become_user，這行指令會精準寫入 /home/kali/.gitconfig 中。
