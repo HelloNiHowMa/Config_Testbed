@@ -1,0 +1,36 @@
+---
+- name: 為實驗室所有 Linux 靶機建立超級使用者
+  hosts: all
+  become: yes  # 啟用提權 (相當於 sudo)，因為建帳號需要 root 權限
+
+  tasks:
+    - name: 1. 建立 kali 使用者並設定密碼 (跨平台通用)
+      ansible.builtin.user:
+        name: kali
+        # 這裡的 'kali' 是明文，透過 password_hash 自動轉換為 sha512 雜湊值
+        password: "{{ 'kali' | password_hash('sha512') }}"
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: 2a. 將 kali 加入 Debian 體系的 sudo 群組 (Kali, Ubuntu)
+      ansible.builtin.user:
+        name: kali
+        groups: sudo
+        append: yes
+      when: ansible_os_family == "Debian"
+
+    - name: 2b. 將 kali 加入 RedHat 體系的 wheel 群組 (CentOS, Rocky)
+      ansible.builtin.user:
+        name: kali
+        groups: wheel
+        append: yes
+      when: ansible_os_family == "RedHat"
+
+    - name: 3. 設定 sudo 免密碼 (實驗室強烈推薦，方便後續自動化)
+      ansible.builtin.copy:
+        content: "kali ALL=(ALL) NOPASSWD:ALL\n"
+        dest: /etc/sudoers.d/kali
+        mode: '0440'
+        # 寫入前先用 visudo 檢查語法，避免不小心把系統 sudo 搞壞
+        validate: 'visudo -cf %s'
