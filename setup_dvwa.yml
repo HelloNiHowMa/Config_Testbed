@@ -65,23 +65,38 @@
             remote_src: yes
             force: no
 
-    - name: 5. 修改設定檔與權限
+    - name: 5. 修改設定檔與權限 (修正版)
       block:
+        # 💡 修正 1：適應新版 DVWA 的 PHP 陣列與 getenv 語法
         - ansible.builtin.replace:
             path: /var/www/html/dvwa/config/config.inc.php
             regexp: "{{ item.regexp }}"
             replace: "{{ item.replace }}"
           loop:
-            - { regexp: "'db_user'\\s+=> '.*'", replace: "'db_user' => 'dvwa_user'" }
-            - { regexp: "'db_password'\\s+=> '.*'", replace: "'db_password' => 'dvwa_password'" }
-            - { regexp: "'default_security_level'\\s+=> '.*'", replace: "'default_security_level' => 'low'" }
+            - { regexp: "^\\$_DVWA\\[\\s*'db_user'\\s*\\].*", replace: "$_DVWA[ 'db_user' ] = 'dvwa_user';" }
+            - { regexp: "^\\$_DVWA\\[\\s*'db_password'\\s*\\].*", replace: "$_DVWA[ 'db_password' ] = 'dvwa_password';" }
+            - { regexp: "^\\$_DVWA\\[\\s*'default_security_level'\\s*\\].*", replace: "$_DVWA[ 'default_security_level' ] = 'low';" }
+            
+        # 💡 修正 2：對齊 DVWA 網頁要求的確切路徑
         - ansible.builtin.file:
             path: "/var/www/html/dvwa/{{ item }}"
             owner: "{{ (ansible_os_family == 'Debian') | ternary('www-data', 'apache') }}"
-            mode: '0755'
+            mode: '0777' # 為了確保 Web Shell 實驗順暢，上傳目錄給予最寬鬆權限
             state: directory
             recurse: yes
-          loop: [uploads, external/phpids/lib/IDS/tmp]
+          loop: 
+            - hackable/uploads
+            - config
+            - external/phpids/lib/IDS/tmp
+
+    # 💡 修正 3：(講師加碼) 打通 File Inclusion 漏洞的 PHP 限制
+    - name: 5.5 開啟 PHP allow_url_include (LFI/RFI 實驗必備)
+      ansible.builtin.replace:
+        path: "{{ (ansible_os_family == 'Debian') | ternary('/etc/php/8.3/apache2/php.ini', '/etc/php.ini') }}"
+        regexp: '^allow_url_include\s*=\s*Off'
+        replace: 'allow_url_include = On'
+      # 忽略找不到檔案的錯誤 (萬一 Ubuntu 版本不同導致 PHP 路徑變更時不至於中斷)
+      ignore_errors: yes
 
     # ==========================================
     # 💡 Rocky 9 專屬：處理 SELinux 與防火牆
