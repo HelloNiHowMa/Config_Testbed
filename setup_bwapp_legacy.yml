@@ -8,39 +8,48 @@
   tasks:
     - name: 執行全自動 Shell 腳本 (繞過 Python 依賴限制)
       ansible.builtin.raw: |
-        # 1. 修復 APT 來源 (指向 old-releases)
-        sed -i 's/archive.ubuntu.com/old-releases.ubuntu.com/g' /etc/apt/sources.list
-        sed -i 's/security.ubuntu.com/old-releases.ubuntu.com/g' /etc/apt/sources.list
+        # 1. 暴力重建 sources.list (無腦覆蓋，解決所有鏡像站或路徑錯誤)
+        CODENAME=$(lsb_release -cs)
+        cat <<EOF > /etc/apt/sources.list
+        deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse
+        deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse
+        deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse
+        EOF
+        
+        # 刪除可能導致報錯的舊版第三方 PPA
+        rm -rf /etc/apt/sources.list.d/*
+
+        # 2. 更新快取
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
 
-        # 2. 安裝原生 LAMP 套件
-        export DEBIAN_FRONTEND=noninteractive
+        # 3. 安裝原生 LAMP 套件
         apt-get install -y apache2 mysql-server php5 php5-mysql unzip wget
 
-        # 3. 自動判斷網頁根目錄 (Ubuntu 12 vs 14)
+        # 4. 自動判斷網頁根目錄 (Ubuntu 12 vs 14)
         if [ -d "/var/www/html" ]; then
             WEB_ROOT="/var/www/html"
         else
             WEB_ROOT="/var/www"
         fi
 
-        # 4. 下載與解壓 bWAPP (如果還沒下載過的話)
+        # 5. 下載與解壓 bWAPP
         if [ ! -d "$WEB_ROOT/bWAPP" ]; then
             wget -q --no-check-certificate https://sourceforge.net/projects/bwapp/files/bWAPP/bWAPPv2.2/bWAPP_latest.zip/download -O /tmp/bwapp.zip
             unzip -q -o /tmp/bwapp.zip -d $WEB_ROOT/
         fi
 
-        # 5. 配置資料庫連線與權限
+        # 6. 配置資料庫連線與權限
         chown -R www-data:www-data $WEB_ROOT/bWAPP
         chmod -R 777 $WEB_ROOT/bWAPP
         sed -i 's/$db_username = "root";/$db_username = "bwapp_user";/g' $WEB_ROOT/bWAPP/admin/settings.php
         sed -i 's/$db_password = "bug";/$db_password = "bwapp_password";/g' $WEB_ROOT/bWAPP/admin/settings.php
 
-        # 6. 建立資料庫與使用者
+        # 7. 建立資料庫與使用者
         service mysql start
         mysql -u root -e "CREATE DATABASE IF NOT EXISTS bWAPP;"
         mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
         mysql -u root -e "FLUSH PRIVILEGES;"
         
-        # 7. 重啟網頁伺服器
+        # 8. 重啟網頁伺服器
         service apache2 restart
