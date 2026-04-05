@@ -1,68 +1,60 @@
 ---
-- name: Kali Linux 實戰環境建置與個人化設定
+- name: Kali Linux 實戰環境建置與個人化設定 (無 Vagrant 帳號版)
   hosts: kali
-  become: yes  # 預設開啟全域提權 (為了執行 apt)
+  # 💡 移除全域的 become: yes，預設以連線的帳號 (kali) 執行
 
   tasks:
     # ==========================================
-    # 系統層級任務 (Root 權限執行)
+    # 階段一：打通 SSH 免密碼任督二脈 (只需跑一次)
+    # ==========================================
+    - name: 將控制機的公鑰注入到 kali 的信任清單
+      ansible.posix.authorized_key:
+        user: kali
+        state: present
+        # 💡 關鍵改變：用 lookup('file', ...) 讀取「控制機」本機的公鑰檔案
+        # 假設你的公鑰叫 lab_key.pub 且放在跟 playbook 同一個資料夾下：
+        key: "{{ lookup('file', 'lab_key.pub') }}"
+        
+        # (如果你是用 ssh-keygen 預設產生的，路徑會是 '~/.ssh/id_rsa.pub')
+
+    # ==========================================
+    # 階段二：系統層級任務 (需要 Root 權限)
     # ==========================================
     - name: 更新 APT 套件庫並安裝必備軟體
+      become: yes  # 💡 局部提權：執行 apt 需要 root 權限
       ansible.builtin.apt:
         name:
           - seclists
           - feroxbuster
         update_cache: yes
         state: present
-      # 💡 說明：在 Kali 裡，seclists, feroxbuster 和 rockyou 的壓縮檔
-      # 都已經直接包在官方 repo 裡，用 apt 裝是最穩定的。
 
     - name: 解壓縮 rockyou.txt (若尚未解壓縮)
+      become: yes  # 💡 局部提權
       ansible.builtin.command:
         cmd: gunzip -k /usr/share/wordlists/rockyou.txt.gz
       args:
         creates: /usr/share/wordlists/rockyou.txt
-      # 💡 說明：args: creates 是 Ansible 實現冪等性的神兵利器！
-      # 如果系統發現 rockyou.txt 已經存在，就會直接回報 OK 並跳過解壓縮。
-      
-    - name: 讀取靶機上 vagrant 的 authorized_keys 內容
-      ansible.builtin.slurp:
-        src: /home/vagrant/.ssh/authorized_keys
-      register: vagrant_keys
-      # 💡 說明：slurp 模組專門用來讀取遠端機器的檔案內容，並將其存在變數中。
 
-    - name: 安全地將金鑰注入 kali 的信任清單 (不覆蓋現有金鑰)
-      ansible.posix.authorized_key:
-        user: kali
-        state: present
-        key: "{{ vagrant_keys['content'] | b64decode }}"
-      # 💡 說明：authorized_key 模組天生具備完美的冪等性。
-      # 它會檢查該字串是否已經存在，如果沒有就「附加 (Append)」在最後一行；
-      # 如果已經有了，就什麼都不做，絕對不會動到原本的其他金鑰。
-      
     # ==========================================
-    # 使用者層級任務 (切換為 kali 帳號執行)
+    # 階段三：使用者層級任務 (kali 本人執行)
     # ==========================================
-    - name: 2 & 4. 設定 kali 使用者的 .vimrc (取消滑鼠、新增垂直光棒)
+    # 因為我們預設就是用 kali 登入，且沒有加 become: yes，所以直接作用在 kali 身上
+    - name: 設定 kali 使用者的 .vimrc (取消滑鼠、新增垂直光棒)
       ansible.builtin.blockinfile:
-        path: /home/kali/.vimrc
+        path: ~/.vimrc  # 💡 直接用 ~ 代表當前使用者的家目錄
         create: yes
-        owner: kali  # 確保檔案擁有者是 kali，而不是 root
-        group: kali
         mode: '0644'
         block: |
-          " 取消 vi/vim 滑鼠點選功能 (避免終端機複製貼上時被干擾)
+          " 取消 vi/vim 滑鼠點選功能
           set mouse=
           
-          " 新增垂直的對齊光棒 (Cursor Column)
+          " 新增垂直的對齊光棒
           set cursorcolumn
           
-          " (講師加碼推薦：開啟語法高亮與行號)
           syntax on
           set number
 
-    - name: 5. 將 kali 使用者的 Git 預設編輯器改為 vim
-      become_user: kali  # 關鍵：將執行身分從 root 降級為 kali
+    - name: 將 Git 預設編輯器改為 vim
       ansible.builtin.command:
         cmd: git config --global core.editor "vim"
-      # 💡 說明：透過 become_user，這行指令會精準寫入 /home/kali/.gitconfig 中。
