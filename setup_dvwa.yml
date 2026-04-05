@@ -59,6 +59,7 @@
         - ansible.builtin.git:
             repo: 'https://github.com/digininja/DVWA.git'
             dest: /var/www/html/dvwa
+            update: no
         - ansible.builtin.copy:
             src: /var/www/html/dvwa/config/config.inc.php.dist
             dest: /var/www/html/dvwa/config/config.inc.php
