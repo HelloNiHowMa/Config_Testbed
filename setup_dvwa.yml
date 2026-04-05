@@ -1,0 +1,104 @@
+---
+- name: 在 Ubuntu 與 Rocky Linux 9 部署 DVWA 環境
+  hosts: Ubuntu, Redhat
+  become: yes
+
+  vars:
+    # 根據作業系統家族定義不同的變數
+    pkg_list:
+      Debian: [apache2, mariadb-server, php, php-mysqli, php-gd, git, python3-pymysql]
+      RedHat: [httpd, mariadb-server, php, php-mysqlnd, php-gd, git, python3-PyMySQL]
+    apache_svc:
+      Debian: apache2
+      RedHat: httpd
+    mysql_socket:
+      Debian: /var/run/mysqld/mysqld.sock
+      RedHat: /var/lib/mysql/mysql.sock
+
+  tasks:
+    - name: 1. 安裝環境所需套件 (自動辨識系統)
+      ansible.builtin.package: # 💡 使用 package 模組會自動調用 apt 或 dnf
+        name: "{{ pkg_list[ansible_os_family] }}"
+        state: present
+
+    - name: 2. 啟動 Apache 與 MariaDB
+      ansible.builtin.service:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+      loop:
+        - "{{ apache_svc[ansible_os_family] }}"
+        - mariadb
+
+    - name: 3. 建立資料庫與使用者
+      block:
+        - community.mysql.mysql_db:
+            name: dvwa
+            login_unix_socket: "{{ mysql_socket[ansible_os_family] }}"
+        - community.mysql.mysql_user:
+            name: dvwa_user
+            password: dvwa_password
+            priv: 'dvwa.*:ALL'
+            host: localhost
+            login_unix_socket: "{{ mysql_socket[ansible_os_family] }}"
+
+    - name: 4. 下載與配置 DVWA
+      block:
+        - ansible.builtin.git:
+            repo: 'https://github.com/digininja/DVWA.git'
+            dest: /var/www/html/dvwa
+        - ansible.builtin.copy:
+            src: /var/www/html/dvwa/config/config.inc.php.dist
+            dest: /var/www/html/dvwa/config/config.inc.php
+            remote_src: yes
+            force: no
+
+    - name: 5. 修改設定檔與權限
+      block:
+        - ansible.builtin.replace:
+            path: /var/www/html/dvwa/config/config.inc.php
+            regexp: "{{ item.regexp }}"
+            replace: "{{ item.replace }}"
+          loop:
+            - { regexp: "'db_user'\\s+=> '.*'", replace: "'db_user' => 'dvwa_user'" }
+            - { regexp: "'db_password'\\s+=> '.*'", replace: "'db_password' => 'dvwa_password'" }
+            - { regexp: "'default_security_level'\\s+=> '.*'", replace: "'default_security_level' => 'low'" }
+        - ansible.builtin.file:
+            path: "/var/www/html/dvwa/{{ item }}"
+            owner: "{{ (ansible_os_family == 'Debian') | ternary('www-data', 'apache') }}"
+            mode: '0755'
+            state: directory
+            recurse: yes
+          loop: [uploads, external/phpids/lib/IDS/tmp]
+
+    # ==========================================
+    # 💡 Rocky 9 專屬：處理 SELinux 與防火牆
+    # ==========================================
+    - name: 6. (僅限 Rocky) 調整 SELinux 權限
+      when: ansible_os_family == "RedHat"
+      block:
+        - name: 允許 Apache 寫入特定目錄
+          community.general.sefcontext:
+            target: '/var/www/html/dvwa/(uploads|external/phpids/lib/IDS/tmp)(/.*)?'
+            setype: httpd_sys_rw_content_t
+            state: present
+        - name: 套用 SELinux 變更
+          ansible.builtin.command: restorecon -Rv /var/www/html/dvwa
+        - name: 允許 Apache 連線資料庫
+          ansible.posix.seboolean:
+            name: httpd_can_network_connect_db
+            state: yes
+            persistent: yes
+
+    - name: 7. (僅限 Rocky) 開放防火牆 HTTP 埠口
+      when: ansible_os_family == "RedHat"
+      ansible.posix.firewalld:
+        service: http
+        permanent: yes
+        state: enabled
+        immediate: yes
+
+    - name: 8. 重新啟動 Apache
+      ansible.builtin.service:
+        name: "{{ apache_svc[ansible_os_family] }}"
+        state: restarted
