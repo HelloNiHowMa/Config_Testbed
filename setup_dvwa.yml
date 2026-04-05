@@ -1,7 +1,7 @@
 ---
 - name: 在 Ubuntu 與 Rocky Linux 9 部署 DVWA 環境
   #hosts: Ubuntu, Redhat
-  hosts: ubuntu, centos9
+  hosts: Ubuntu, centos9
   become: yes
 
   vars:
