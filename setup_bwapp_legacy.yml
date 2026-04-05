@@ -6,50 +6,45 @@
   gather_facts: no  
 
   tasks:
-    - name: 執行全自動 Shell 腳本 (繞過 Python 依賴限制)
+    - name: 執行全自動 Shell 腳本 (最安全 echo 覆寫版)
       ansible.builtin.raw: |
-        # 1. 暴力重建 sources.list (無腦覆蓋，解決所有鏡像站或路徑錯誤)
+        # 1. 取得系統代號 (Ubuntu 12 會拿到 precise，14 會拿到 trusty)
         CODENAME=$(lsb_release -cs)
-        cat <<EOF > /etc/apt/sources.list
-        deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse
-        deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse
-        deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse
-        EOF
         
-        # 刪除可能導致報錯的舊版第三方 PPA
+        # 2. 暴力覆寫 sources.list (使用 echo 最安全，確保 /ubuntu/ 絕對存在)
+        echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse" > /etc/apt/sources.list
+        echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse" >> /etc/apt/sources.list
+        echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse" >> /etc/apt/sources.list
+        
+        # 3. 清除所有舊的第三方 PPA 與損壞的快取
         rm -rf /etc/apt/sources.list.d/*
-
-        # 2. 更新快取
+        apt-get clean
+        
+        # 4. 更新快取
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
-
-        # 3. 安裝原生 LAMP 套件
-        apt-get install -y apache2 mysql-server php5 php5-mysql unzip wget
-
-        # 4. 自動判斷網頁根目錄 (Ubuntu 12 vs 14)
-        if [ -d "/var/www/html" ]; then
-            WEB_ROOT="/var/www/html"
-        else
-            WEB_ROOT="/var/www"
-        fi
-
-        # 5. 下載與解壓 bWAPP
+        
+        # 5. 安裝原生 LAMP 套件 (--force-yes 避免舊系統憑證過期阻擋)
+        apt-get install -y --force-yes apache2 mysql-server php5 php5-mysql unzip wget
+        
+        # 6. 自動判斷網頁根目錄
+        if [ -d "/var/www/html" ]; then WEB_ROOT="/var/www/html"; else WEB_ROOT="/var/www"; fi
+        
+        # 7. 下載與解壓 bWAPP
         if [ ! -d "$WEB_ROOT/bWAPP" ]; then
             wget -q --no-check-certificate https://sourceforge.net/projects/bwapp/files/bWAPP/bWAPPv2.2/bWAPP_latest.zip/download -O /tmp/bwapp.zip
             unzip -q -o /tmp/bwapp.zip -d $WEB_ROOT/
         fi
-
-        # 6. 配置資料庫連線與權限
+        
+        # 8. 配置 bWAPP 權限與資料庫連線
         chown -R www-data:www-data $WEB_ROOT/bWAPP
         chmod -R 777 $WEB_ROOT/bWAPP
         sed -i 's/$db_username = "root";/$db_username = "bwapp_user";/g' $WEB_ROOT/bWAPP/admin/settings.php
         sed -i 's/$db_password = "bug";/$db_password = "bwapp_password";/g' $WEB_ROOT/bWAPP/admin/settings.php
-
-        # 7. 建立資料庫與使用者
+        
+        # 9. 啟動資料庫與網頁伺服器
         service mysql start
         mysql -u root -e "CREATE DATABASE IF NOT EXISTS bWAPP;"
         mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
         mysql -u root -e "FLUSH PRIVILEGES;"
-        
-        # 8. 重啟網頁伺服器
         service apache2 restart
