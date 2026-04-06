@@ -1,50 +1,46 @@
 ---
-- name: 在舊版 Ubuntu 執行全自動部署 
-  hosts: ubuntu12, ubuntu14
-  become: yes
-  gather_facts: no
-
-  tasks:
-    - name: 讓控制機從 GitHub 鏡像站下載 bWAPP
-      ansible.builtin.get_url:
-        url: 'https://github.com/raesene/bWAPP/archive/refs/heads/master.zip'
-        dest: /vagrant/bWAPP_latest.zip
-        mode: '0644'
-      delegate_to: localhost 
-      run_once: true         
-
-    - name: 執行全自動 Shell 腳本 (終極萬用帳密替換版)
+- name: 執行全自動 Shell 腳本 
       ansible.builtin.raw: |
+        # 1. 取得系統代號 (precise 或 trusty)
         CODENAME=$(lsb_release -cs)
-        echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse" > /etc/apt/sources.list
-        echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse" >> /etc/apt/sources.list
-        echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse" >> /etc/apt/sources.list
         
+        # 2. 💡 核心修正：讓系統自己決定要去哪裡抓檔案
+        if [ "$CODENAME" = "precise" ]; then
+            # Ubuntu 12.04 已經徹底 EOL，必須去歷史圖書館
+            REPO_URL="http://old-releases.ubuntu.com/ubuntu/"
+        else
+            # Ubuntu 14.04 (trusty) 仍在 Legacy 支援中，繼續使用主伺服器！
+            REPO_URL="http://archive.ubuntu.com/ubuntu/"
+        fi
+        
+        # 3. 寫入正確的伺服器網址
+        echo "deb $REPO_URL $CODENAME main restricted universe multiverse" > /etc/apt/sources.list
+        echo "deb $REPO_URL $CODENAME-updates main restricted universe multiverse" >> /etc/apt/sources.list
+        echo "deb $REPO_URL $CODENAME-security main restricted universe multiverse" >> /etc/apt/sources.list
+        
+        # 4. 清除壞軌快取並更新
         rm -rf /etc/apt/sources.list.d/*
         apt-get clean
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y --force-yes apache2 mysql-server php5 php5-mysql unzip
         
+        # 5. 自動判斷網頁目錄
         if [ -d "/var/www/html" ]; then WEB_ROOT="/var/www/html"; else WEB_ROOT="/var/www"; fi
         
+        # 6. 清空舊目錄，解壓縮新檔案
         rm -rf $WEB_ROOT/bWAPP
-        
         unzip -q -o /vagrant/bWAPP_latest.zip -d /tmp/
         mv /tmp/bWAPP-master/app $WEB_ROOT/bWAPP
         
+        # 7. 配置檔案權限與密碼寫入
         chown -R www-data:www-data $WEB_ROOT/bWAPP
         chmod -R 777 $WEB_ROOT/bWAPP
-        
-        # 💡 終極修正：使用 .* 無視原本的密碼是什麼，強制寫入 bwapp_password！
         sed -i 's/$db_username = .*/$db_username = "bwapp_user";/g' $WEB_ROOT/bWAPP/admin/settings.php
         sed -i 's/$db_password = .*/$db_password = "bwapp_password";/g' $WEB_ROOT/bWAPP/admin/settings.php
         
+        # 8. 啟動服務並派發權限 (不提早建立空殼資料庫，交給 install.php 處理)
         service mysql start
-        # 💡 刪除這行，不要幫它建空殼，把建立的工作還給 install.php
-        # mysql -u root -e "CREATE DATABASE IF NOT EXISTS bWAPP;"
-        
-        # 就算資料庫還沒建，也可以先發權限
         mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
         mysql -u root -e "FLUSH PRIVILEGES;"
         service apache2 restart
