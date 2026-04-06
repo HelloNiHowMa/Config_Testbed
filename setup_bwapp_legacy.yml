@@ -1,39 +1,41 @@
 ---
-- name: 在極度老舊系統使用 Raw 模組暴力部署 bWAPP
+- name: 在舊版 Ubuntu 執行全自動部署 (含自動下載)
   hosts: ubuntu12, ubuntu14
   become: yes
-  # 💡 絕對關鍵：關閉收集機器資訊，禁止 Ansible 去探測環境，不然一開場就會觸發 Python 錯誤！
-  gather_facts: no  
+  gather_facts: no  # 💡 必須關閉，避開 Python 2.7 語法錯誤
 
   tasks:
-    - name: 執行全自動 Shell 腳本 (最安全 echo 覆寫版)
+    # ==========================================
+    # 第一步：讓控制機「代勞」下載 (全自動關鍵)
+    # ==========================================
+    - name: 讓控制機先下載 bWAPP (避開舊系統 SSL 問題)
+      ansible.builtin.get_url:
+        url: 'https://sourceforge.net/projects/bwapp/files/bWAPP/bWAPPv2.2/bWAPP_latest.zip/download'
+        dest: /vagrant/bWAPP_latest.zip # 💡 存到共享資料夾
+        mode: '0644'
+      delegate_to: localhost # 💡 強制在 ansible_control 本地執行
+      run_once: true         # 💡 兩台機器只需一台執行下載即可
+
+    # ==========================================
+    # 第二步：原本的暴力 Shell 腳本
+    # ==========================================
+    - name: 執行全自動 Shell 腳本 (直接從共享資料夾讀取)
       ansible.builtin.raw: |
-        # 1. 取得系統代號 (Ubuntu 12 會拿到 precise，14 會拿到 trusty)
+        # 1. 暴力覆寫 sources.list (修正 old-releases 路徑)
         CODENAME=$(lsb_release -cs)
-        
-        # 2. 暴力覆寫 sources.list (使用 echo 最安全，確保 /ubuntu/ 絕對存在)
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse" > /etc/apt/sources.list
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse" >> /etc/apt/sources.list
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse" >> /etc/apt/sources.list
         
-        # 3. 清除所有舊的第三方 PPA 與損壞的快取
-        rm -rf /etc/apt/sources.list.d/*
-        apt-get clean
-        
-        # 4. 更新快取
-        export DEBIAN_FRONTEND=noninteractive
         apt-get update
+        apt-get install -y --force-yes apache2 mysql-server php5 php5-mysql unzip
         
-        # 5. 安裝原生 LAMP 套件 (--force-yes 避免舊系統憑證過期阻擋)
-        apt-get install -y --force-yes apache2 mysql-server php5 php5-mysql unzip wget
-        
-        # 6. 自動判斷網頁根目錄
+        # 2. 自動判斷目錄
         if [ -d "/var/www/html" ]; then WEB_ROOT="/var/www/html"; else WEB_ROOT="/var/www"; fi
         
-        # 7. 下載與解壓 bWAPP
+        # 3. 直接解壓縮 (檔案已經被控制機載到這裡了)
         if [ ! -d "$WEB_ROOT/bWAPP" ]; then
-            wget -q --no-check-certificate https://sourceforge.net/projects/bwapp/files/bWAPP/bWAPPv2.2/bWAPP_latest.zip/download -O /tmp/bwapp.zip
-            unzip -q -o /tmp/bwapp.zip -d $WEB_ROOT/
+            unzip -q -o /vagrant/bWAPP_latest.zip -d $WEB_ROOT/
         fi
         
         # 8. 配置 bWAPP 權限與資料庫連線
