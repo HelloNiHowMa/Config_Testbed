@@ -4,10 +4,7 @@
   become: yes
   gather_facts: no
 
-  tasks:
-    # ==========================================
-    # 第一步：讓控制機從 GitHub 下載 (100% 保證直連)
-    # ==========================================
+tasks:
     - name: 讓控制機從 GitHub 鏡像站下載 bWAPP
       ansible.builtin.get_url:
         url: 'https://github.com/raesene/bWAPP/archive/refs/heads/master.zip'
@@ -16,42 +13,34 @@
       delegate_to: localhost 
       run_once: true         
 
-    # ==========================================
-    # 第二步：執行全自動 Shell 腳本
-    # ==========================================
-    - name: 執行全自動 Shell 腳本 (支援 GitHub 資料夾改名)
+    - name: 執行全自動 Shell 腳本 (修正 GitHub 目錄結構版)
       ansible.builtin.raw: |
-        # 1. 暴力覆寫 sources.list
         CODENAME=$(lsb_release -cs)
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse" > /etc/apt/sources.list
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse" >> /etc/apt/sources.list
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse" >> /etc/apt/sources.list
         
-        # 2. 清除快取並安裝套件
         rm -rf /etc/apt/sources.list.d/*
         apt-get clean
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y --force-yes apache2 mysql-server php5 php5-mysql unzip
         
-        # 3. 自動判斷網頁根目錄
         if [ -d "/var/www/html" ]; then WEB_ROOT="/var/www/html"; else WEB_ROOT="/var/www"; fi
         
-        # 4. 解壓縮並重新命名 (處理 GitHub 的 -master 後綴)
-        if [ ! -d "$WEB_ROOT/bWAPP" ]; then
-            # 先解壓到暫存區
-            unzip -q -o /vagrant/bWAPP_latest.zip -d /tmp/
-            # 將 GitHub 預設的 bWAPP-master 資料夾搬移到網頁目錄並改名為 bWAPP
-            mv /tmp/bWAPP-master $WEB_ROOT/bWAPP
-        fi
+        # 💡 修正 1：先強制刪除上一版錯誤的目錄結構，確保乾淨重來
+        rm -rf $WEB_ROOT/bWAPP
         
-        # 5. 配置 bWAPP 權限與資料庫連線
+        # 💡 修正 2：解壓縮後，只把裡面的 app/ 資料夾搬出來變成 bWAPP
+        unzip -q -o /vagrant/bWAPP_latest.zip -d /tmp/
+        mv /tmp/bWAPP-master/app $WEB_ROOT/bWAPP
+        
+        # 💡 修正 3：現在路徑對了，資料庫帳密就能成功寫入 settings.php！
         chown -R www-data:www-data $WEB_ROOT/bWAPP
         chmod -R 777 $WEB_ROOT/bWAPP
         sed -i 's/$db_username = "root";/$db_username = "bwapp_user";/g' $WEB_ROOT/bWAPP/admin/settings.php
         sed -i 's/$db_password = "bug";/$db_password = "bwapp_password";/g' $WEB_ROOT/bWAPP/admin/settings.php
         
-        # 6. 啟動服務與建置資料庫
         service mysql start
         mysql -u root -e "CREATE DATABASE IF NOT EXISTS bWAPP;"
         mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
