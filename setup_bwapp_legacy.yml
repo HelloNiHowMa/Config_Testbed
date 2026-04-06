@@ -1,54 +1,57 @@
 ---
-- name: 在舊版 Ubuntu 執行全自動部署 (含自動下載)
+- name: 在舊版 Ubuntu 執行全自動部署 
   hosts: ubuntu12, ubuntu14
   become: yes
-  gather_facts: no  # 💡 必須關閉，避開 Python 2.7 語法錯誤
+  gather_facts: no
 
   tasks:
     # ==========================================
-    # 第一步：讓控制機「代勞」下載 (全自動關鍵)
+    # 第一步：讓控制機從 GitHub 下載 (100% 保證直連)
     # ==========================================
-    - name: 讓控制機先下載 bWAPP (使用 SourceForge 真正的直連網址)
+    - name: 讓控制機從 GitHub 鏡像站下載 bWAPP
       ansible.builtin.get_url:
-        # 💡 修正：拿掉最後的 /download，並將主網域改為 downloads.sourceforge.net/project/
-        url: 'https://downloads.sourceforge.net/project/bwapp/bWAPP/bWAPPv2.2/bWAPP_latest.zip'
-        dest: /vagrant/bWAPP_latest.zip 
+        url: 'https://github.com/raesene/bWAPP/archive/refs/heads/master.zip'
+        dest: /vagrant/bWAPP_latest.zip
         mode: '0644'
-        # 💡 技巧：偽裝成一般瀏覽器，避免被防火牆擋下
-        headers:
-          User-Agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
       delegate_to: localhost 
-      run_once: true
+      run_once: true         
 
     # ==========================================
-    # 第二步：原本的暴力 Shell 腳本
+    # 第二步：執行全自動 Shell 腳本
     # ==========================================
-    - name: 執行全自動 Shell 腳本 (直接從共享資料夾讀取)
+    - name: 執行全自動 Shell 腳本 (支援 GitHub 資料夾改名)
       ansible.builtin.raw: |
-        # 1. 暴力覆寫 sources.list (修正 old-releases 路徑)
+        # 1. 暴力覆寫 sources.list
         CODENAME=$(lsb_release -cs)
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME main restricted universe multiverse" > /etc/apt/sources.list
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-updates main restricted universe multiverse" >> /etc/apt/sources.list
         echo "deb http://old-releases.ubuntu.com/ubuntu/ $CODENAME-security main restricted universe multiverse" >> /etc/apt/sources.list
         
+        # 2. 清除快取並安裝套件
+        rm -rf /etc/apt/sources.list.d/*
+        apt-get clean
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y --force-yes apache2 mysql-server php5 php5-mysql unzip
         
-        # 2. 自動判斷目錄
+        # 3. 自動判斷網頁根目錄
         if [ -d "/var/www/html" ]; then WEB_ROOT="/var/www/html"; else WEB_ROOT="/var/www"; fi
         
-        # 3. 直接解壓縮 (檔案已經被控制機載到這裡了)
+        # 4. 解壓縮並重新命名 (處理 GitHub 的 -master 後綴)
         if [ ! -d "$WEB_ROOT/bWAPP" ]; then
-            unzip -q -o /vagrant/bWAPP_latest.zip -d $WEB_ROOT/
+            # 先解壓到暫存區
+            unzip -q -o /vagrant/bWAPP_latest.zip -d /tmp/
+            # 將 GitHub 預設的 bWAPP-master 資料夾搬移到網頁目錄並改名為 bWAPP
+            mv /tmp/bWAPP-master $WEB_ROOT/bWAPP
         fi
         
-        # 8. 配置 bWAPP 權限與資料庫連線
+        # 5. 配置 bWAPP 權限與資料庫連線
         chown -R www-data:www-data $WEB_ROOT/bWAPP
         chmod -R 777 $WEB_ROOT/bWAPP
         sed -i 's/$db_username = "root";/$db_username = "bwapp_user";/g' $WEB_ROOT/bWAPP/admin/settings.php
         sed -i 's/$db_password = "bug";/$db_password = "bwapp_password";/g' $WEB_ROOT/bWAPP/admin/settings.php
         
-        # 9. 啟動資料庫與網頁伺服器
+        # 6. 啟動服務與建置資料庫
         service mysql start
         mysql -u root -e "CREATE DATABASE IF NOT EXISTS bWAPP;"
         mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
