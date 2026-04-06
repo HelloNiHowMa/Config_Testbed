@@ -48,6 +48,3 @@
         mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
         mysql -u root -e "FLUSH PRIVILEGES;"
         service apache2 restart
-        mysql -u root -e "GRANT ALL PRIVILEGES ON bWAPP.* TO 'bwapp_user'@'localhost' IDENTIFIED BY 'bwapp_password';"
-        mysql -u root -e "FLUSH PRIVILEGES;"
-        service apache2 restart
