@@ -1,5 +1,5 @@
 ---
-- name: 執行全自動 Shell 腳本 
+  - name: 執行全自動 Shell 腳本 
       ansible.builtin.raw: |
         # 1. 取得系統代號 (precise 或 trusty)
         CODENAME=$(lsb_release -cs)
