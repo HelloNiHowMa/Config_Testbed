@@ -1,6 +1,6 @@
-# ==========================================
-# 前置作業：自動處理 SSH 金鑰
-# ==========================================
+# ================================================
+# Testbed前置作業：自動處理 SSH 金鑰，Ansible會用到
+# ================================================
 key_path = File.join(__dir__, "lab_key")
 pub_key_path = "#{key_path}.pub"
 
@@ -22,10 +22,32 @@ Vagrant.configure("2") do |config|
 
   # 在最上方統一設定：只要是 VirtualBox 啟動的機器，全部都用連結複製！
   # 會先用BOX做一份BASE的VM，再去link那台base vm
-  #config.vm.provider "virtualbox" do |v|
-  #  v.linked_clone = true
-  #end
+  config.vm.provider "virtualbox" do |v|
+    v.linked_clone = true
+  end
+ 
+  # 派發公鑰給靶機
+  config.vm.provision "shell", inline: <<-SHELL
+  # 加上一個簡單的判斷：如果不是 Linux 就跳過
+    if [ ! -d "/home/vagrant" ]; then
+      exit 0
+    fi
+	
+    echo ">>> [系統設定] 正在植入Testbed專屬 SSH 公鑰..."
   
+    # 確保 .ssh 資料夾存在
+    mkdir -p /home/vagrant/.ssh
+  
+    # 將 Ruby 變數 LAB_PUB_KEY 的內容寫入 authorized_keys
+    echo "#{LAB_PUB_KEY}" >> /home/vagrant/.ssh/authorized_keys
+  
+    # 確保權限正確 (SSH 對權限要求非常嚴格，錯了就連不上)
+    chmod 700 /home/vagrant/.ssh
+    chmod 600 /home/vagrant/.ssh/authorized_keys
+    chown -R vagrant:vagrant /home/vagrant/.ssh
+SHELL
+ 
+ 
   # ==========================================
   # 節點 1: Kali Linux (攻擊機)
   # ==========================================
@@ -36,20 +58,17 @@ Vagrant.configure("2") do |config|
 	#kali.vm.network "public_network"   
     kali.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
 	
-	# 派發公鑰給靶機
+    kali.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Kali"
+      vb.memory = "2048"
+      vb.cpus = 2
+      vb.gui = true
+	  #設定這只有這台是Link Clone
+	  #vb.linked_clone = true 
+    end
+
+	# 在Kali新增kali這個User
     kali.vm.provision "shell", inline: <<-SHELL
-      echo ">>> [系統設定] 正在植入實驗室專屬 SSH 公鑰..."
-      
-      # 確保 .ssh 資料夾存在
-      mkdir -p /home/vagrant/.ssh
-      
-      # 將 Ruby 變數 LAB_PUB_KEY 的內容寫入 authorized_keys
-      echo "#{LAB_PUB_KEY}" >> /home/vagrant/.ssh/authorized_keys
-      
-      # 確保權限正確 (SSH 對權限要求非常嚴格，錯了就連不上)
-      chmod 700 /home/vagrant/.ssh
-      chmod 600 /home/vagrant/.ssh/authorized_keys
-      chown -R vagrant:vagrant /home/vagrant/.ssh
 	  
 	  echo ">>> [系統設定] 檢查使用者 kali 是否存在..."
       
@@ -69,14 +88,6 @@ Vagrant.configure("2") do |config|
       fi
     SHELL
 	
-    kali.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Kali"
-      vb.memory = "2048"
-      vb.cpus = 2
-      vb.gui = true
-	  #設定這只有這台是Link Clone
-	  #vb.linked_clone = true 
-    end
   end
 
   # ==========================================
@@ -94,6 +105,9 @@ Vagrant.configure("2") do |config|
       vb.cpus = 1
       vb.gui = true
     end
+	
+	
+	
   end
 
   # ==========================================
@@ -273,7 +287,39 @@ Vagrant.configure("2") do |config|
         echo ">>> .ansible.cfg 已存在，跳過覆蓋動作，保留您的自訂設定。"
       fi
     SHELL
-
-	
+  end
+		
+  # ==========================================
+  # 節點 11: Ubuntu 12.04 (靶機 9 - 極度老舊漏洞環境，如 bWAPP 原生相容)
+  # ==========================================
+  config.vm.define "ubuntu12" do |node|
+    node.vm.box = "bento/ubuntu-12.04"
+    node.vm.hostname = "ubuntu12-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Ubuntu12"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = false
     end
+  end
+
+  # ==========================================
+  # 節點 12: Ubuntu 14.04 (靶機 10 - 舊時代 LAMP 架構測試用)
+  # ==========================================
+  config.vm.define "ubuntu14" do |node|
+    node.vm.box = "bento/ubuntu-14.04"
+    node.vm.hostname = "ubuntu14-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Ubuntu14"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = false
+    end
+  end
 end
