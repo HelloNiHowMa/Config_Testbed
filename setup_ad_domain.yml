@@ -34,7 +34,7 @@
 # ==========================================================
 - name: Phase 2 - 將成員伺服器與用戶端加入網域
   # 💡 進階靶向技巧：選擇 Windows AD 群組，但「排除(!)」DC1
-  hosts: Windows AD:!win2022_dc
+  hosts: Windows_AD:!win2022_dc
   gather_facts: no
   vars:
     domain_name: "cyber.internal"
