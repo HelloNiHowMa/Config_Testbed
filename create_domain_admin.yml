@@ -9,7 +9,7 @@
       community.windows.win_domain_user:
         name: dvwa
         # 💡 強烈建議使用「單引號」包覆密碼，避免 Ansible 將 $$ 誤判為變數
-        password: 'Pa$$word'
+        password: 'Pa$$w0rd'
         state: present
         groups:
           - Domain Admins
