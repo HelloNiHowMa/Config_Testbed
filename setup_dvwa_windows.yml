@@ -1,0 +1,83 @@
+---
+- name: 在多台 Windows 靶機上部署 XAMPP 與 DVWA
+  # 💡 直接指定你要部署的三台機器
+  hosts: win2022_srv1, win10_dc_client, win11_dc_client
+  gather_facts: no
+  vars:
+    xampp_dir: "C:\\xampp"
+    htdocs_dir: "C:\\xampp\\htdocs"
+    dvwa_dir: "C:\\xampp\\htdocs\\dvwa"
+
+  tasks:
+    - name: 1. 建立暫存資料夾
+      ansible.windows.win_file:
+        path: C:\temp
+        state: directory
+
+    - name: 2. 透過 Chocolatey 安裝 XAMPP (包含 Apache, MySQL, PHP)
+      # Ansible 會自動幫忙安裝 Chocolatey (如果機器上還沒有的話)
+      win_chocolatey:
+        name: xampp
+        state: present
+        # 加上啟動參數避免安裝過程中彈出視窗卡住
+        install_args: '/sp- /verysilent /norestart'
+
+    - name: 3. 註冊並啟動 Apache 與 MySQL 服務
+      # XAMPP 預設不會將它們註冊為背景服務，我們透過它內建的腳本來處理
+      ansible.windows.win_shell: |
+        cd C:\xampp\apache
+        .\apache_installservice.bat
+        Start-Service -Name "Apache2.4"
+        
+        cd C:\xampp\mysql
+        .\mysql_installservice.bat
+        Start-Service -Name "mysql"
+      ignore_errors: yes
+
+    - name: 4. 確保 Apache 與 MySQL 服務為啟動狀態
+      ansible.windows.win_service:
+        name: "{{ item }}"
+        state: started
+        start_mode: auto
+      loop:
+        - Apache2.4
+        - mysql
+
+    - name: 5. 下載 DVWA 原始碼壓縮檔
+      ansible.windows.win_get_url:
+        url: https://github.com/digininja/DVWA/archive/master.zip
+        dest: C:\temp\dvwa.zip
+
+    - name: 6. 解壓縮 DVWA 到 XAMPP 網頁目錄 (htdocs)
+      # 使用 win_unzip 模組
+      community.windows.win_unzip:
+        src: C:\temp\dvwa.zip
+        dest: "{{ htdocs_dir }}"
+        creates: "{{ htdocs_dir }}\\DVWA-master"
+
+    - name: 7. 將解壓縮的資料夾重新命名為 dvwa
+      ansible.windows.win_shell: Rename-Item -Path "{{ htdocs_dir }}\DVWA-master" -NewName "dvwa"
+      args:
+        creates: "{{ dvwa_dir }}"
+
+    - name: 8. 複製設定檔 (config.inc.php.dist -> config.inc.php)
+      ansible.windows.win_copy:
+        src: "{{ dvwa_dir }}\\config\\config.inc.php.dist"
+        dest: "{{ dvwa_dir }}\\config\\config.inc.php"
+        remote_src: yes
+
+    - name: 9. 設定 DVWA 資料庫密碼 (XAMPP 預設 root 密碼為空)
+      # 利用正規表示式將預設密碼替換為空字串
+      ansible.windows.win_lineinfile:
+        path: "{{ dvwa_dir }}\\config\\config.inc.php"
+        regexp: "^\\$_DVWA\\[ 'db_password' \\]"
+        line: "$_DVWA[ 'db_password' ] = '';"
+        
+    - name: 10. 將 reCAPTCHA key 替換掉以消除首頁紅字警告 (選用)
+      ansible.windows.win_lineinfile:
+        path: "{{ dvwa_dir }}\\config\\config.inc.php"
+        regexp: "{{ item.regex }}"
+        line: "{{ item.replace }}"
+      loop:
+        - { regex: "^\\$_DVWA\\[ 'recaptcha_public_key' \\]", replace: "$_DVWA[ 'recaptcha_public_key' ] = '6LdK7xITAAzzAAJQTfL7fs6pKjBnTzOvErB1R';"}
+        - { regex: "^\\$_DVWA\\[ 'recaptcha_private_key' \\]", replace: "$_DVWA[ 'recaptcha_private_key' ] = '6LdK7xITAzzAAL_uw9YXVUOPoIHPZLfw2K1n5NVQ';"}
