@@ -97,3 +97,10 @@
       loop:
         - { regex: "^\\$_DVWA\\[ 'recaptcha_public_key' \\]", replace: "$_DVWA[ 'recaptcha_public_key' ] = '6LdK7xITAAzzAAJQTfL7fs6pKjBnTzOvErB1R';"}
         - { regex: "^\\$_DVWA\\[ 'recaptcha_private_key' \\]", replace: "$_DVWA[ 'recaptcha_private_key' ] = '6LdK7xITAzzAAL_uw9YXVUOPoIHPZLfw2K1n5NVQ';"}
+    - name: 11. 將 DVWA 預設安全等級改為 low (方便直接開始打靶)
+      community.windows.win_lineinfile:
+        path: "{{ dvwa_dir }}\\config\\config.inc.php"
+        # 尋找設定檔中的 default_security_level 變數
+        regexp: "^\\$_DVWA\\[ 'default_security_level' \\]"
+        # 強制將其修改為 'low'
+        line: "$_DVWA[ 'default_security_level' ] = 'low';"
