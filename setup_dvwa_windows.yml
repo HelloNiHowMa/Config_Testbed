@@ -14,13 +14,22 @@
         path: C:\temp
         state: directory
 
-    - name: 2. 透過 Chocolatey 安裝 XAMPP (包含 Apache, MySQL, PHP)
-      # Ansible 會自動幫忙安裝 Chocolatey (如果機器上還沒有的話)
-      win_chocolatey:
-        name: xampp
-        state: present
-        # 加上啟動參數避免安裝過程中彈出視窗卡住
-        install_args: '/sp- /verysilent /norestart'
+    - name: 2. 下載 XAMPP 免安裝版 ZIP (完美避開隱形視窗卡死 Bug)
+      ansible.windows.win_get_url:
+        # 使用 7.4.x 版以確保與 DVWA 的 PHP 語法完美相容
+        url: "https://sourceforge.net/projects/xampp/files/XAMPP%20Windows/7.4.33/xampp-portable-windows-x64-7.4.33-0-VC15.zip/download"
+        dest: C:\temp\xampp.zip
+
+    - name: 2.1 解壓縮 XAMPP 到 C 槽
+      community.windows.win_unzip:
+        src: C:\temp\xampp.zip
+        dest: C:\
+        creates: C:\xampp\xampp-control.exe
+
+    - name: 2.2 執行 XAMPP 初始化腳本 (自動綁定路徑)
+      ansible.windows.win_shell: |
+        cd C:\xampp
+        .\setup_xampp.bat
 
     - name: 3. 註冊並啟動 Apache 與 MySQL 服務
       # XAMPP 預設不會將它們註冊為背景服務，我們透過它內建的腳本來處理
