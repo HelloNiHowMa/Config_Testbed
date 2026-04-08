@@ -66,15 +66,16 @@
         dest: "{{ dvwa_dir }}\\config\\config.inc.php"
         remote_src: yes
 
-    - name: 9. 設定 DVWA 資料庫密碼 (XAMPP 預設 root 密碼為空)
-      # 利用正規表示式將預設密碼替換為空字串
-      ansible.windows.win_lineinfile:
+- name: 9. 設定 DVWA 資料庫密碼 (XAMPP 預設 root 密碼為空)
+      # 💡 修正：使用 community.windows 擴充包
+      community.windows.win_lineinfile:
         path: "{{ dvwa_dir }}\\config\\config.inc.php"
         regexp: "^\\$_DVWA\\[ 'db_password' \\]"
         line: "$_DVWA[ 'db_password' ] = '';"
         
     - name: 10. 將 reCAPTCHA key 替換掉以消除首頁紅字警告 (選用)
-      ansible.windows.win_lineinfile:
+      # 💡 修正：使用 community.windows 擴充包
+      community.windows.win_lineinfile:
         path: "{{ dvwa_dir }}\\config\\config.inc.php"
         regexp: "{{ item.regex }}"
         line: "{{ item.replace }}"
