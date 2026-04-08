@@ -1,0 +1,17 @@
+---
+- name: 新增靶場專屬 Domain Admin 帳號
+  # 💡 只需要針對網域控制站 (DC) 下達指令，整個網域就會生效
+  hosts: win2022_dc
+  gather_facts: no
+
+  tasks:
+    - name: 建立網域使用者 dvwa 並升級為 Domain Admins
+      community.windows.win_domain_user:
+        name: dvwa
+        # 💡 強烈建議使用「單引號」包覆密碼，避免 Ansible 將 $$ 誤判為變數
+        password: 'Pa$$word'
+        state: present
+        groups:
+          - Domain Admins
+        # 靶場防呆必備：密碼永久有效，避免 42 天後做實驗時發現帳號被鎖定
+        password_never_expires: yes
