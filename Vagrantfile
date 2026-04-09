@@ -7,45 +7,43 @@ pub_key_path = "#{key_path}.pub"
 # 如果偵測到私鑰不存在，就呼叫系統指令自動產生
 unless File.exist?(key_path)
   puts ">>> [系統提示] 偵測到首次執行，正在為您的實驗室自動產生專屬 SSH 金鑰..."
-  # 呼叫學生電腦 (Windows/Mac) 內建的 ssh-keygen 產生金鑰
+  # 呼叫 ssh-keygen 產生金鑰
   # 使用 RSA 以確保最大相容性，且不設定密碼 (-N "")
   system("ssh-keygen -t rsa -b 2048 -f \"#{key_path}\" -q -N \"\"")
 end
 
-# 讀取公鑰內容到變數中，準備發派給所有靶機
+# 讀取公鑰內容到變數中，準備發派給所有靶機，Ansbile的SSH要用
 LAB_PUB_KEY = File.read(pub_key_path).strip
 
-#START_WINDOWS 是一個變數，等下設定Windows VM的時候會參考它
+#START_WINDOWS 是用來控制vagrant up時，要不要帶Windows起來的一個變數，
+#設為false，vagrant up的時候，不會去帶Windows的機器
 START_WINDOWS = false
 
 Vagrant.configure("2") do |config|
 
-  # 在最上方統一設定：只要是 VirtualBox 啟動的機器，全部都用連結複製！
-  # 會先用BOX做一份BASE的VM，再去link那台base vm
+  # 在最上方統一設定：只要是 VirtualBox 啟動的機器，全部都用link_clone！
+  # 會先在virtualbox做一份BASE的VM，其他機器再去link那台base vm
   config.vm.provider "virtualbox" do |v|
     v.linked_clone = true
   end
  
-  # 派發公鑰給靶機
-  config.vm.provision "shell", inline: <<-SHELL
-  # 加上一個簡單的判斷：如果不是 Linux 就跳過
-    if [ ! -d "/home/vagrant" ]; then
-      exit 0
-    fi
-	
-    echo ">>> [系統設定] 正在植入Testbed專屬 SSH 公鑰..."
-  
-    # 確保 .ssh 資料夾存在
-    mkdir -p /home/vagrant/.ssh
-  
-    # 將 Ruby 變數 LAB_PUB_KEY 的內容寫入 authorized_keys
-    echo "#{LAB_PUB_KEY}" >> /home/vagrant/.ssh/authorized_keys
-  
-    # 確保權限正確 (SSH 對權限要求非常嚴格，錯了就連不上)
-    chmod 700 /home/vagrant/.ssh
-    chmod 600 /home/vagrant/.ssh/authorized_keys
-    chown -R vagrant:vagrant /home/vagrant/.ssh
-SHELL
+  # ==========================================
+  # 建立 Linux 靶機清單，精準派發 SSH 公鑰 
+  # ==========================================
+  linux_vms = ["kali", "centos", "rocky9", "ubuntu20", "ubuntu22", "ubuntu24", "ansible_control", "ubuntu12", "ubuntu14"]
+
+  linux_vms.each do |vm_name|
+    config.vm.define vm_name do |node|
+      node.vm.provision "shell", inline: <<-SHELL
+        echo ">>> [系統設定] 正在為 #{vm_name} 植入專屬 SSH 公鑰..."
+        mkdir -p /home/vagrant/.ssh
+        echo "#{LAB_PUB_KEY}" >> /home/vagrant/.ssh/authorized_keys
+        chmod 700 /home/vagrant/.ssh
+        chmod 600 /home/vagrant/.ssh/authorized_keys
+        chown -R vagrant:vagrant /home/vagrant/.ssh
+      SHELL
+    end
+  end
  
  
   # ==========================================
@@ -91,150 +89,7 @@ SHELL
   end
 
   # ==========================================
-  # 節點 2: CentOS Stream 9 (靶機 1)
-  # ==========================================
-  config.vm.define "centos" do |centos|
-    centos.vm.box = "bento/centos-stream-9"
-    centos.vm.hostname = "centos-target"
-	#centos.vm.network "public_network"
-    centos.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-
-    centos.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_CentOS9"
-      vb.memory = "1024"
-      vb.cpus = 1
-      vb.gui = true
-    end
-	
-	
-	
-  end
-
-  # ==========================================
-  # 節點 3: Rocky Linux 9 (靶機 2)
-  # ==========================================
-  config.vm.define "rocky9" do |node|
-    node.vm.box = "bento/rockylinux-9"
-    node.vm.hostname = "rocky9-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Rocky9"
-      vb.memory = "1024"
-      vb.cpus = 1
-      vb.gui = false
-    end
-  end
-
-  # ==========================================
-  # 節點 4: Ubuntu 20.04 (靶機 3)
-  # ==========================================
-  config.vm.define "ubuntu20" do |node|
-    node.vm.box = "bento/ubuntu-20.04"
-    node.vm.hostname = "ubuntu20-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Ubuntu20"
-      vb.memory = "1024"
-      vb.cpus = 1
-      vb.gui = false
-    end
-  end
-
-  # ==========================================
-  # 節點 5: Ubuntu 22.04 (靶機 4)
-  # ==========================================
-  config.vm.define "ubuntu22" do |node|
-    node.vm.box = "bento/ubuntu-22.04"
-    node.vm.hostname = "ubuntu22-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Ubuntu22"
-      vb.memory = "1024"
-      vb.cpus = 1
-      vb.gui = false
-    end
-  end
-
-  # ==========================================
-  # 節點 6: Ubuntu 24.04 (靶機 5)
-  # ==========================================
-  config.vm.define "ubuntu24" do |node|
-    node.vm.box = "bento/ubuntu-24.04"
-    node.vm.hostname = "ubuntu24-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Ubuntu24"
-      vb.memory = "1024"
-      vb.cpus = 1
-      vb.gui = false
-    end
-  end
-
-  # ==========================================
-  # 節點 7: Windows 10 (靶機 6 - 用戶端)
-  # ==========================================
-  #config.vm.define "win10" do |node|
-  config.vm.define "win10", autostart: START_WINDOWS do |node|
-    # 使用社群中最穩定的 Windows 映像檔提供者
-    node.vm.box = "gusztavvargadr/windows-10"
-    node.vm.hostname = "win10-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Win10"
-      vb.memory = "4096" # Windows 至少需要 4GB 記憶體才會順
-      vb.cpus = 2
-      vb.gui = true      # Windows 強烈建議開啟 GUI
-    end
-  end
-
-  # ==========================================
-  # 節點 8: Windows 11 (靶機 7 - 用戶端)
-  # ==========================================
-  #config.vm.define "win11" do |node|
-  config.vm.define "win11", autostart: START_WINDOWS do |node|
-    node.vm.box = "gusztavvargadr/windows-11"
-    node.vm.hostname = "win11-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Win11"
-      vb.memory = "4096"
-      vb.cpus = 2
-      vb.gui = true
-    end
-  end
-
-  # ==========================================
-  # 節點 9: Windows Server 2022 (靶機 8 - 網域控制站預備機)
-  # ==========================================
-  #config.vm.define "win2022" do |node|
-  config.vm.define "win2022", autostart: START_WINDOWS do |node|
-    node.vm.box = "gusztavvargadr/windows-server-2022-standard"
-    node.vm.hostname = "win2022-dc"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
-    node.vm.provider "virtualbox" do |vb|
-      vb.name = "Testbed_Win2022"
-      vb.memory = "4096"
-      vb.cpus = 2
-      vb.gui = true
-    end
-  end
-
-  # ==========================================
-  # 節點 10: Ansible Control Node (控制機)
+  # 節點 2: Ansible Control Node (控制機)
   # ==========================================
   config.vm.define "ansible_control" do |node|
     # 沿用現有的 Ubuntu 22.04 映像檔
@@ -288,9 +143,215 @@ SHELL
       fi
     SHELL
   end
-		
+  
+
   # ==========================================
-  # 節點 11: Ubuntu 12.04 (靶機 9 - 極度老舊漏洞環境，如 bWAPP 原生相容)
+  # 節點 3: CentOS Stream 9 (靶機 1)
+  # ==========================================
+  config.vm.define "centos" do |centos|
+    centos.vm.box = "bento/centos-stream-9"
+    centos.vm.hostname = "centos-target"
+	#centos.vm.network "public_network"
+    centos.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+
+    centos.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_CentOS9"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = true
+    end
+  end
+
+  # ==========================================
+  # 節點 4: Rocky Linux 9 (靶機 2)
+  # ==========================================
+  config.vm.define "rocky9" do |node|
+    node.vm.box = "bento/rockylinux-9"
+    node.vm.hostname = "rocky9-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Rocky9"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = false
+    end
+  end
+
+  # ==========================================
+  # 節點 5: Ubuntu 20.04 (靶機 3)
+  # ==========================================
+  config.vm.define "ubuntu20" do |node|
+    node.vm.box = "bento/ubuntu-20.04"
+    node.vm.hostname = "ubuntu20-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Ubuntu20"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = false
+    end
+  end
+
+  # ==========================================
+  # 節點 6: Ubuntu 22.04 (靶機 4)
+  # ==========================================
+  config.vm.define "ubuntu22" do |node|
+    node.vm.box = "bento/ubuntu-22.04"
+    node.vm.hostname = "ubuntu22-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Ubuntu22"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = false
+    end
+  end
+
+  # ==========================================
+  # 節點 7: Ubuntu 24.04 (靶機 5)
+  # ==========================================
+  config.vm.define "ubuntu24" do |node|
+    node.vm.box = "bento/ubuntu-24.04"
+    node.vm.hostname = "ubuntu24-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Ubuntu24"
+      vb.memory = "1024"
+      vb.cpus = 1
+      vb.gui = false
+    end
+  end
+
+  # ==========================================
+  # 節點 8: Windows 10 (靶機 6 - 用戶端)
+  # ==========================================
+  #config.vm.define "win10" do |node|
+  config.vm.define "win10", autostart: START_WINDOWS do |node|
+    # 使用社群中最穩定的 Windows 映像檔提供者
+    node.vm.box = "gusztavvargadr/windows-10"
+    node.vm.hostname = "win10-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win10"
+      vb.memory = "4096" # Windows 至少需要 4GB 記憶體才會順
+      vb.cpus = 2
+      vb.gui = true      # Windows 強烈建議開啟 GUI
+    end
+  end
+
+  # ==========================================
+  # 節點 9: Windows 11 (靶機 7 - 用戶端)
+  # ==========================================
+  #config.vm.define "win11" do |node|
+  config.vm.define "win11", autostart: START_WINDOWS do |node|
+    node.vm.box = "gusztavvargadr/windows-11"
+    node.vm.hostname = "win11-target"
+    #node.vm.network "public_network"
+    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win11"
+      vb.memory = "4096"
+      vb.cpus = 2
+      vb.gui = true
+    end
+  end
+
+  # ==========================================
+  # 節點 10: Windows Server 2022 (DC1 - 網域控制站預備機)
+  # ==========================================
+  config.vm.define "win2022_dc", autostart: START_WINDOWS do |node|
+    node.vm.box = "gusztavvargadr/windows-server-2022-standard"
+    node.vm.hostname = "DC1"
+    # 💡 直接在 public_network 指定固定 IP，並橋接到 Wi-Fi 網卡
+    node.vm.network "public_network", ip: "10.0.0.201", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win2022_DC1"
+      vb.memory = "4096"
+      vb.cpus = 2
+      vb.gui = true
+    end
+  end
+
+  # ==========================================
+  # 節點 11: Windows Server 2022 (SRV1 - 網域成員伺服器 1)
+  # ==========================================
+  config.vm.define "win2022_srv1", autostart: START_WINDOWS do |node|
+    node.vm.box = "gusztavvargadr/windows-server-2022-standard"
+    node.vm.hostname = "SRV1"
+    node.vm.network "public_network", ip: "10.0.0.202", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win2022_SRV1"
+      vb.memory = "4096"
+      vb.cpus = 2
+      vb.gui = true
+    end
+  end
+
+  # ==========================================
+  # 節點 12: Windows Server 2022 (SRV2 - 網域成員伺服器 2)
+  # ==========================================
+  config.vm.define "win2022_srv2", autostart: START_WINDOWS do |node|
+    node.vm.box = "gusztavvargadr/windows-server-2022-standard"
+    node.vm.hostname = "SRV2"
+    node.vm.network "public_network", ip: "10.0.0.203", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win2022_SRV2"
+      vb.memory = "4096"
+      vb.cpus = 2
+      vb.gui = true
+    end
+  end
+
+  # ==========================================
+  # 節點 13: Windows 10 (用戶端 2 - 固定 IP 版)
+  # ==========================================
+  config.vm.define "win10_dc", autostart: START_WINDOWS do |node|
+    node.vm.box = "gusztavvargadr/windows-10"
+    node.vm.hostname = "win10-client2"
+    # 指定固定 IP 為 10.0.0.210
+    node.vm.network "public_network", ip: "10.0.0.210", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win10_2"
+      vb.memory = "4096"
+      vb.cpus = 2
+      vb.gui = true
+    end
+  end
+
+  # ==========================================
+  # 節點 14: Windows 11 (用戶端 2 - 固定 IP 版)
+  # ==========================================
+  config.vm.define "win11_dc", autostart: START_WINDOWS do |node|
+    node.vm.box = "gusztavvargadr/windows-11"
+    node.vm.hostname = "win11-client2"
+    # 指定固定 IP 為 10.0.0.211
+    node.vm.network "public_network", ip: "10.0.0.211", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
+    node.vm.provider "virtualbox" do |vb|
+      vb.name = "Testbed_Win11_2"
+      vb.memory = "4096"
+      vb.cpus = 2
+      vb.gui = true
+    end
+  end
+ 
+  # ==========================================
+  # 節點 15: Ubuntu 12.04 (靶機 9 - 極度老舊漏洞環境，如 bWAPP 原生相容)
   # ==========================================
   config.vm.define "ubuntu12" do |node|
     node.vm.box = "bento/ubuntu-12.04"
@@ -307,7 +368,7 @@ SHELL
   end
 
   # ==========================================
-  # 節點 12: Ubuntu 14.04 (靶機 10 - 舊時代 LAMP 架構測試用)
+  # 節點 16: Ubuntu 14.04 (靶機 10 - 舊時代 LAMP 架構測試用)
   # ==========================================
   config.vm.define "ubuntu14" do |node|
     node.vm.box = "bento/ubuntu-14.04"
