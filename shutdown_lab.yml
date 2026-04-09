@@ -1,20 +1,30 @@
 ---
-- name: 實驗室一鍵優雅關機腳本
-  hosts: all
+# 第一階段：先處理所有受控機器，但排除控制機自己
+- name: 1. 關閉所有受控機 (排除控制節點)
+  hosts: all:!ansible_control
   become: yes
   gather_facts: yes
-
   tasks:
-    - name: 1. 通知 Linux 艦隊關機 (非同步執行，避免 Ansible 卡住等待)
+    - name: 通知 Linux 艦隊關機
       ansible.builtin.shell: sleep 2 && shutdown -h now
       async: 1
       poll: 0
       when: ansible_os_family != "Windows"
       ignore_errors: yes
 
-    - name: 2. 通知 Windows 艦隊關機 (非同步執行)
+    - name: 通知 Windows 艦隊關機
       ansible.windows.win_shell: Start-Sleep -Seconds 2; Stop-Computer -Force
       async: 1
       poll: 0
       when: ansible_os_family == "Windows"
       ignore_errors: yes
+
+# 第二階段：確認大家都收到通知後，控制機再自盡
+- name: 2. 最後關閉控制節點自己
+  [cite_start]hosts: ansible_control [cite: 13]
+  become: yes
+  tasks:
+    - name: 執行控制機關機指令
+      ansible.builtin.shell: sleep 5 && shutdown -h now
+      async: 1
+      poll: 0
