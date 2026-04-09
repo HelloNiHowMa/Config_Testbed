@@ -21,7 +21,7 @@
 
 # 第二階段：確認大家都收到通知後，控制機再自盡
 - name: 2. 最後關閉控制節點自己
-  [cite_start]hosts: ansible_control [cite: 13]
+  hosts: ansible_control
   become: yes
   tasks:
     - name: 執行控制機關機指令
