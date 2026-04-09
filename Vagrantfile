@@ -1,3 +1,22 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+# ================================================
+# 系統計時器：計算 vagrant up 總耗時
+# ================================================
+start_time = Time.now
+
+at_exit do
+  end_time = Time.now
+  duration = end_time - start_time
+  minutes = (duration / 60).to_i
+  seconds = (duration % 60).round(2)
+  puts "\n========================================================"
+  puts ">>> [系統提示] 本次 Vagrant 執行完畢！"
+  puts ">>> 總耗時：#{minutes} 分鐘 #{seconds} 秒"
+  puts "========================================================\n"
+end
+
 # ================================================
 # Testbed前置作業：自動處理 SSH 金鑰，Ansible會用到
 # ================================================
@@ -15,9 +34,22 @@ end
 # 讀取公鑰內容到變數中，準備發派給所有靶機，Ansbile的SSH要用
 LAB_PUB_KEY = File.read(pub_key_path).strip
 
+
+# ================================================
+# 全局變數與環境設定區
+# ================================================
 #START_WINDOWS 是用來控制vagrant up時，要不要帶Windows起來的一個變數，
 #設為false，vagrant up的時候，不會去帶Windows的機器
-START_WINDOWS = false
+START_WINDOWS = true
+# IP 前綴變數，方便統一修改網段
+IP_PREFIX = "10.0.0."
+# 💡 強制關閉平行啟動，確保 16 台機器嚴格依照由上到下的順序乖乖排隊開機
+ENV["VAGRANT_NO_PARALLEL"] = "yes"
+
+
+# ================================================
+# Vagrantfile 正文
+# ================================================
 
 Vagrant.configure("2") do |config|
 
@@ -51,10 +83,11 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "kali" do |kali|
     kali.vm.box = "kalilinux/rolling"
-    kali.vm.hostname = "kali-attacker"
+    kali.vm.hostname = "kali-2026-01-231"
 	#不指定網卡，vagrant會用選單，問說要bridge到哪一張網卡
 	#kali.vm.network "public_network"   
-    kali.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    #kali.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+	kali.vm.network "public_network", ip: "#{IP_PREFIX}231", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
 	
     kali.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Kali"
@@ -65,25 +98,39 @@ Vagrant.configure("2") do |config|
 	  #vb.linked_clone = true 
     end
 
-	# 在Kali新增kali這個User
+    # 在Kali新增kali這個User，並配置好所有權限與金鑰
     kali.vm.provision "shell", inline: <<-SHELL
-	  
-	  echo ">>> [系統設定] 檢查使用者 kali 是否存在..."
+      echo ">>> [系統設定] 檢查使用者 kali 是否存在..."
       
-      # 判斷系統中是否已經有 kali 這個帳號
       if id "kali" >/dev/null 2>&1; then
         echo ">>> 使用者 kali 已經存在，跳過建立流程。"
       else
         echo ">>> 偵測到無此帳號，開始建立超級使用者 kali..."
-        
-        # 1. 建立使用者 (-m 建立家目錄, -s 指定 bash, -G 加入 sudo 群組)
         useradd -m -s /bin/bash -G sudo kali
-        
-        # 2. 設定密碼為 kali (透過 chpasswd 達成非互動式修改)
         echo "kali:kali" | chpasswd
         
-        echo ">>> 使用者 kali 建立與權限設定完畢！"
+        # 💡 架構師加碼：設定免密碼 sudo
+        # 確保使用者在打靶或裝軟體時，不需要一直瘋狂輸入密碼
+        echo "kali ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/kali
       fi
+      
+      # ==========================================
+      # 💡 確保 kali 帳號也擁有外部注入的 SSH 公鑰
+      # ==========================================
+      echo ">>> [系統設定] 正在同步 kali 使用者的 SSH 金鑰..."
+      mkdir -p /home/kali/.ssh
+      
+      # 檢查公鑰是否已經存在，避免重複寫入 (確保冪等性)
+      if ! grep -q "#{LAB_PUB_KEY}" /home/kali/.ssh/authorized_keys 2>/dev/null; then
+        echo "#{LAB_PUB_KEY}" >> /home/kali/.ssh/authorized_keys
+      fi
+      
+      # 嚴格校正權限，防止 SSH 伺服器因為權限太寬鬆而拒絕連線
+      chmod 700 /home/kali/.ssh
+      chmod 600 /home/kali/.ssh/authorized_keys
+      chown -R kali:kali /home/kali/.ssh
+      
+      echo ">>> 使用者 kali 環境就緒！"
     SHELL
 	
   end
@@ -94,9 +141,8 @@ Vagrant.configure("2") do |config|
   config.vm.define "ansible_control" do |node|
     # 沿用現有的 Ubuntu 22.04 映像檔
     node.vm.box = "bento/ubuntu-22.04"
-    node.vm.hostname = "ansible-control"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "ansible-control-232"
+	node.vm.network "public_network", ip: "#{IP_PREFIX}232", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ansible_Control"
@@ -142,6 +188,30 @@ Vagrant.configure("2") do |config|
         echo ">>> .ansible.cfg 已存在，跳過覆蓋動作，保留您的自訂設定。"
       fi
     SHELL
+	
+	# 💡 新增這段 Shell Provisioner 來安裝工具與 Clone 專案
+    node.vm.provision "shell", inline: <<-SHELL
+      echo ">>> [系統設定] 正在更新套件庫並安裝 net-tools 與 git..."
+      export DEBIAN_FRONTEND=noninteractive
+      
+      # 1. 更新 apt 索引並安裝軟體 (-y 代表遇到詢問自動回答 yes)
+      #apt-get update
+      apt-get install -y net-tools git
+
+      echo ">>> [系統設定] 正在從 GitHub Clone 專案..."
+      
+      # 2. 切換到 vagrant 使用者的家目錄
+      cd /home/vagrant
+      
+      # 3. 執行 git clone
+      git clone https://github.com/HelloNiHowMa/Config_Testbed
+      
+      # 4. 關鍵步驟：把下載下來的資料夾擁有者，從 root 改回 vagrant
+      chown -R vagrant:vagrant /home/vagrant/Config_Testbed
+      
+      echo ">>> [系統設定] 初始化完成！"
+    SHELL
+
   end
   
 
@@ -150,9 +220,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "centos" do |centos|
     centos.vm.box = "bento/centos-stream-9"
-    centos.vm.hostname = "centos-target"
-	#centos.vm.network "public_network"
-    centos.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    centos.vm.hostname = "centos9-233"
+    centos.vm.network "public_network", ip: "#{IP_PREFIX}233", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
 
     centos.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_CentOS9"
@@ -160,6 +229,7 @@ Vagrant.configure("2") do |config|
       vb.cpus = 1
       vb.gui = true
     end
+	
   end
 
   # ==========================================
@@ -167,10 +237,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "rocky9" do |node|
     node.vm.box = "bento/rockylinux-9"
-    node.vm.hostname = "rocky9-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
+    node.vm.hostname = "rocky9-234"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}234", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"    
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Rocky9"
       vb.memory = "1024"
@@ -184,10 +252,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "ubuntu20" do |node|
     node.vm.box = "bento/ubuntu-20.04"
-    node.vm.hostname = "ubuntu20-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-    
+    node.vm.hostname = "ubuntu20-235"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}235", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"    
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ubuntu20"
       vb.memory = "1024"
@@ -201,9 +267,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "ubuntu22" do |node|
     node.vm.box = "bento/ubuntu-22.04"
-    node.vm.hostname = "ubuntu22-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "ubuntu22-236"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}236", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ubuntu22"
@@ -218,9 +283,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "ubuntu24" do |node|
     node.vm.box = "bento/ubuntu-24.04"
-    node.vm.hostname = "ubuntu24-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "ubuntu24-237"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}237", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ubuntu24"
@@ -237,9 +301,7 @@ Vagrant.configure("2") do |config|
   config.vm.define "win10", autostart: START_WINDOWS do |node|
     # 使用社群中最穩定的 Windows 映像檔提供者
     node.vm.box = "gusztavvargadr/windows-10"
-    node.vm.hostname = "win10-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}238", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win10"
@@ -247,6 +309,38 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = true      # Windows 強烈建議開啟 GUI
     end
+	
+    # 第一階段：改名與斬斷視窗
+    node.vm.provision "shell", inline: <<-'SHELL'
+      Write-Host ">>> [System] Disabling Network Discovery popup..."
+	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      if (!(Test-Path $regPath)) {
+          New-Item -Path $regPath -Force | Out-Null
+      }
+      Write-Host ">>> [System] Renaming computer to win10-alone-238..."
+      Rename-Computer -NewName win10-alone-238 -Force
+    SHELL
+
+    # 💡 關鍵順序：先重開機！讓 Windows 重新判定網路完畢
+    node.vm.provision :reload
+
+    # 💡 關鍵順序：重開機回來後，再執行第二階段的「終極解武裝」
+    node.vm.provision "shell", inline: <<-'SHELL'
+    #  Write-Host ">>> [System] Setting network category to Private..."
+    #  Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private -ErrorAction SilentlyContinue
+      
+    #  Write-Host ">>> [System] Disabling Windows Firewall via netsh..."
+      # 使用 netsh 是關閉防火牆最鐵腕的作法，比 PowerShell 模組更不容易被防毒攔截
+    #  netsh advfirewall set allprofiles state off
+      
+      Write-Host ">>> [System] Disabling Windows Defender..."
+      Add-MpPreference -ExclusionPath "C:\" -ErrorAction SilentlyContinue
+	#無效  
+	#  Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+    #  Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
+
+    SHELL
+ 
   end
 
   # ==========================================
@@ -255,9 +349,7 @@ Vagrant.configure("2") do |config|
   #config.vm.define "win11" do |node|
   config.vm.define "win11", autostart: START_WINDOWS do |node|
     node.vm.box = "gusztavvargadr/windows-11"
-    node.vm.hostname = "win11-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}239", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win11"
@@ -265,6 +357,39 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = true
     end
+	
+    # 第一階段：改名與斬斷視窗
+    node.vm.provision "shell", inline: <<-'SHELL'
+      Write-Host ">>> [System] Disabling Network Discovery popup..."
+	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      if (!(Test-Path $regPath)) {
+          New-Item -Path $regPath -Force | Out-Null
+      }
+      Write-Host ">>> [System] Renaming computer to win10-alone-238..."
+      Rename-Computer -NewName win11-alone-239 -Force
+    SHELL
+
+    # 💡 關鍵順序：先重開機！讓 Windows 重新判定網路完畢
+    node.vm.provision :reload
+
+    # 💡 關鍵順序：重開機回來後，再執行第二階段的「終極解武裝」
+    node.vm.provision "shell", inline: <<-'SHELL'
+    #  Write-Host ">>> [System] Setting network category to Private..."
+    #  Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private -ErrorAction SilentlyContinue
+      
+    #  Write-Host ">>> [System] Disabling Windows Firewall via netsh..."
+      # 使用 netsh 是關閉防火牆最鐵腕的作法，比 PowerShell 模組更不容易被防毒攔截
+    #  netsh advfirewall set allprofiles state off
+      
+      Write-Host ">>> [System] Disabling Windows Defender..."
+      Add-MpPreference -ExclusionPath "C:\" -ErrorAction SilentlyContinue
+	#無效  
+	#  Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+    #  Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
+
+    SHELL
+ 
+  
   end
 
   # ==========================================
@@ -272,9 +397,9 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "win2022_dc", autostart: START_WINDOWS do |node|
     node.vm.box = "gusztavvargadr/windows-server-2022-standard"
-    node.vm.hostname = "DC1"
+    node.vm.hostname = "DC1-201"
     # 💡 直接在 public_network 指定固定 IP，並橋接到 Wi-Fi 網卡
-    node.vm.network "public_network", ip: "10.0.0.201", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}201", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win2022_DC1"
@@ -289,8 +414,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "win2022_srv1", autostart: START_WINDOWS do |node|
     node.vm.box = "gusztavvargadr/windows-server-2022-standard"
-    node.vm.hostname = "SRV1"
-    node.vm.network "public_network", ip: "10.0.0.202", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "SRV1-202"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}202", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win2022_SRV1"
@@ -305,8 +430,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "win2022_srv2", autostart: START_WINDOWS do |node|
     node.vm.box = "gusztavvargadr/windows-server-2022-standard"
-    node.vm.hostname = "SRV2"
-    node.vm.network "public_network", ip: "10.0.0.203", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "SRV2-203"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}203", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win2022_SRV2"
@@ -319,11 +444,11 @@ Vagrant.configure("2") do |config|
   # ==========================================
   # 節點 13: Windows 10 (用戶端 2 - 固定 IP 版)
   # ==========================================
-  config.vm.define "win10_dc", autostart: START_WINDOWS do |node|
+  config.vm.define "win10_dc_client", autostart: START_WINDOWS do |node|
     node.vm.box = "gusztavvargadr/windows-10"
-    node.vm.hostname = "win10-client2"
+    node.vm.hostname = "win10-dc-client-210"
     # 指定固定 IP 為 10.0.0.210
-    node.vm.network "public_network", ip: "10.0.0.210", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}210", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win10_2"
@@ -336,11 +461,11 @@ Vagrant.configure("2") do |config|
   # ==========================================
   # 節點 14: Windows 11 (用戶端 2 - 固定 IP 版)
   # ==========================================
-  config.vm.define "win11_dc", autostart: START_WINDOWS do |node|
+  config.vm.define "win11_dc_client", autostart: START_WINDOWS do |node|
     node.vm.box = "gusztavvargadr/windows-11"
-    node.vm.hostname = "win11-client2"
+    node.vm.hostname = "win11-dc-client-211"
     # 指定固定 IP 為 10.0.0.211
-    node.vm.network "public_network", ip: "10.0.0.211", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}211", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Win11_2"
@@ -350,14 +475,14 @@ Vagrant.configure("2") do |config|
     end
   end
  
+		
   # ==========================================
   # 節點 15: Ubuntu 12.04 (靶機 9 - 極度老舊漏洞環境，如 bWAPP 原生相容)
   # ==========================================
   config.vm.define "ubuntu12" do |node|
     node.vm.box = "bento/ubuntu-12.04"
-    node.vm.hostname = "ubuntu12-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "ubuntu12-target-240"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}240", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ubuntu12"
@@ -372,9 +497,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "ubuntu14" do |node|
     node.vm.box = "bento/ubuntu-14.04"
-    node.vm.hostname = "ubuntu14-target"
-    #node.vm.network "public_network"
-    node.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.hostname = "ubuntu14-target-241"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}241", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ubuntu14"
