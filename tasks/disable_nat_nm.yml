@@ -1,0 +1,45 @@
+---
+# tasks/disable_nat_nm.yml
+- name: "[NM] 尋找 NAT 網卡名稱 (搜尋 10.0.2.x 網段)"
+  ansible.builtin.shell: |
+    ip -4 addr show | grep 'inet 10.0.2.' | awk '{print $NF}'
+  register: linux_nat_iface
+  changed_when: false
+
+- name: "[NM] 尋找 NAT 網卡 MAC 位址"
+  ansible.builtin.shell: |
+    cat /sys/class/net/{{ linux_nat_iface.stdout }}/address
+  register: linux_nat_mac
+  when: linux_nat_iface.stdout | default('') != ""
+  changed_when: false
+
+- name: "[NM] 確保 NetworkManager 設定檔目錄存在"
+  ansible.builtin.file:
+    path: /etc/NetworkManager/conf.d
+    state: directory
+    mode: '0755'
+  when: linux_nat_iface.stdout | default('') != ""
+  ignore_errors: yes
+
+- name: "[NM] 建立 NetworkManager 封印設定檔 (將該 MAC 設為 Unmanaged)"
+  ansible.builtin.copy:
+    dest: "/etc/NetworkManager/conf.d/99-unmanaged-vagrant-nat.conf"
+    content: |
+      [keyfile]
+      unmanaged-devices=mac:{{ linux_nat_mac.stdout }}
+    owner: root
+    group: root
+    mode: '0644'
+  when: linux_nat_mac.stdout | default('') != ""
+  register: nm_conf_status
+  ignore_errors: yes
+
+- name: "[NM] 重新載入 NetworkManager 設定 (如果設定檔有更新)"
+  ansible.builtin.command: nmcli connection reload
+  when: nm_conf_status is changed
+  ignore_errors: yes
+
+- name: "[NM] 物理性關閉 NAT 網卡 (ip link set down)"
+  ansible.builtin.command: "ip link set {{ linux_nat_iface.stdout }} down"
+  when: linux_nat_iface.stdout | default('') != ""
+  ignore_errors: yes
