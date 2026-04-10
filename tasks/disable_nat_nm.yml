@@ -8,7 +8,7 @@
 
 - name: "[NM] 設定預設閘道與 DNS"
   ansible.builtin.shell: |
-    nmcli device modify {{ private_iface.stdout }} ipv4.gateway 10.0.0.1 ipv4.dns "1.1.1.1"
+    nmcli device modify {{ private_iface.stdout }} ipv4.gateway {{ lab_gateway }} ipv4.dns "{{ lab_dns }}"
   when: private_iface.stdout | default('') != ""
   ignore_errors: yes
 
