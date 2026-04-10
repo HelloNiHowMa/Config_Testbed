@@ -1,5 +1,16 @@
 ---
 # tasks/disable_nat_windows.yml
+- name: "[Windows] 設定預設閘道與 DNS"
+  ansible.windows.win_shell: |
+    $adapter = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "10.0.0.*" }
+    if ($adapter) {
+        $idx = $adapter.InterfaceIndex
+        # 設定 DNS
+        Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses ("1.1.1.1")
+        # 建立預設路由 (如果已存在會忽略報錯)
+        New-NetRoute -InterfaceIndex $idx -DestinationPrefix "0.0.0.0/0" -NextHop "10.0.0.1" -ErrorAction SilentlyContinue
+    }
+    
 - name: "[Windows] 尋找並停用 NAT 網卡"
   ansible.windows.win_shell: |
     $natAdapter = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "10.0.2.*" }
