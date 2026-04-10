@@ -7,7 +7,7 @@
     if [ ! -z "$PRI_IFACE" ]; then
       # 避免重複寫入，先檢查是否已有 gateway
       if ! grep -q "gateway 10.0.0.1" /etc/network/interfaces; then
-        sed -i "/iface $PRI_IFACE inet static/a \    gateway 10.0.0.1\n    dns-nameservers 1.1.1.1" /etc/network/interfaces
+        sed -i "/iface $PRI_IFACE inet static/a \    gateway {{ lab_gateway }}\n    dns-nameservers {{ lab_dns }}" /etc/network/interfaces
         ifdown $PRI_IFACE && ifup $PRI_IFACE
       fi
     fi
