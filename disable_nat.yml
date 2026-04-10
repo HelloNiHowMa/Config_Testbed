@@ -30,9 +30,6 @@
   gather_facts: no   # 💡 終極防禦：絕對不准跑 setup.py
 
   tasks:
-    - name: 載入 Legacy 處理邏輯
-      ansible.builtin.include_tasks: tasks/disable_nat_legacy.yml
-      
     - name: 載入 Legacy 處理邏輯 (老舊 Ubuntu)
       ansible.builtin.include_tasks: tasks/disable_nat_legacy.yml
       when: 
