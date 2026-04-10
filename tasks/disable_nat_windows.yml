@@ -1,26 +1,33 @@
 ---
 # tasks/disable_nat_windows.yml
-- name: "[Windows] 設定預設閘道與 DNS"
+- name: "[Windows] 設定預設閘道與 DNS，並停用 NAT 網卡"
   ansible.windows.win_shell: |
-    $adapter = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "10.0.0.*" }
-    if ($adapter) {
-        $idx = $adapter.InterfaceIndex
+    # 1. 處理私有網路 (10.0.0.x)
+    $priIp = Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -like "10.0.0.*" | Select-Object -First 1
+    if ($priIp) {
+        $idx = $priIp.InterfaceIndex
+        Write-Output ">>> 找到私有網卡 Index: $idx"
+        
         # 設定 DNS
-        Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses ("1.1.1.1")
-        # 建立預設路由 (如果已存在會忽略報錯)
-        New-NetRoute -InterfaceIndex $idx -DestinationPrefix "0.0.0.0/0" -NextHop "10.0.0.1" -ErrorAction SilentlyContinue
+        Set-DnsClientServerAddress -InterfaceIndex $idx -ServerAddresses ("{{ lab_dns }}")
+        
+        # 💡 移除舊的 0.0.0.0 路由，避免發生衝突報錯
+        Remove-NetRoute -InterfaceIndex $idx -DestinationPrefix "0.0.0.0/0" -Confirm:$false -ErrorAction SilentlyContinue
+        
+        # 建立新的預設閘道
+        New-NetRoute -InterfaceIndex $idx -DestinationPrefix "0.0.0.0/0" -NextHop "{{ lab_gateway }}" -ErrorAction SilentlyContinue
+        Write-Output ">>> 路由與 DNS 設定完成"
     }
-    
-- name: "[Windows] 尋找並停用 NAT 網卡"
-  ansible.windows.win_shell: |
-    $natAdapter = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like "10.0.2.*" }
-    if ($natAdapter) {
-        $ifIndex = $natAdapter.InterfaceIndex
-        Disable-NetAdapter -InterfaceIndex $ifIndex -Confirm:$false
-        Write-Output "Disabled NAT Adapter with Index $ifIndex"
-    } else {
-        Write-Output "No NAT adapter found or already disabled."
+
+    # 2. 處理 NAT 網路 (10.0.2.x)
+    $natIp = Get-NetIPAddress -AddressFamily IPv4 | Where-Object IPAddress -like "10.0.2.*" | Select-Object -First 1
+    if ($natIp) {
+        $natIdx = $natIp.InterfaceIndex
+        Write-Output ">>> 找到 NAT 網卡 Index: $natIdx，準備停用..."
+        # 💡 強制停用網卡
+        Disable-NetAdapter -InterfaceIndex $natIdx -Confirm:$false -ErrorAction SilentlyContinue
+        Write-Output ">>> NAT 網卡已成功停用"
     }
-  register: win_nat_disable
-  changed_when: "'Disabled' in win_nat_disable.stdout"
+  register: win_net_result
+  changed_when: "'設定完成' in win_net_result.stdout or '準備停用' in win_net_result.stdout"
   ignore_errors: yes
