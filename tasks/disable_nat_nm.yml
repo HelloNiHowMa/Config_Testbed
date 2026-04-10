@@ -1,5 +1,17 @@
 ---
 # tasks/disable_nat_nm.yml
+- name: "[NM] 尋找私有網路網卡名稱 (10.0.0.x 網段)"
+  ansible.builtin.shell: |
+    ip -4 addr show | grep 'inet 10.0.0.' | awk '{print $NF}'
+  register: private_iface
+  changed_when: false
+
+- name: "[NM] 設定預設閘道與 DNS"
+  ansible.builtin.shell: |
+    nmcli device modify {{ private_iface.stdout }} ipv4.gateway 10.0.0.1 ipv4.dns "1.1.1.1"
+  when: private_iface.stdout | default('') != ""
+  ignore_errors: yes
+
 - name: "[NM] 尋找 NAT 網卡名稱 (搜尋 10.0.2.x 網段)"
   ansible.builtin.shell: |
     ip -4 addr show | grep 'inet 10.0.2.' | awk '{print $NF}'
