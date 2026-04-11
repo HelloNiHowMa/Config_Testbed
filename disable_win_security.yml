@@ -4,17 +4,22 @@
   gather_facts: no # 關閉 facts 收集可以加快執行速度
 
   tasks:
-
-    - name: "[Windows Defender] 將 C:\\ 加入排除清單 (避免惡意程式被秒殺)"
+    - name: "[Windows Defender] 檢查並將 C:\\ 加入排除清單"
       ansible.windows.win_shell: |
-        Add-MpPreference -ExclusionPath "C:\" -ErrorAction SilentlyContinue
-      ignore_errors: yes
-
-    - name: "[Windows Defender] 關閉即時防護與行為監控"
-      ansible.windows.win_shell: |
-        Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-        Set-MpPreference -DisableBehaviorMonitoring $true -ErrorAction SilentlyContinue
-      ignore_errors: yes
+        # 1. 先取得目前的排除清單
+        $currentExclusions = (Get-MpPreference).ExclusionPath
+        
+        # 2. 判斷 C:\ 是否已經在清單內
+        if ($null -ne $currentExclusions -and $currentExclusions -contains 'C:\') {
+            Write-Output "OK_ALREADY_EXISTS"
+        } else {
+            # 3. 如果不在清單內，才執行加入的動作
+            Add-MpPreference -ExclusionPath 'C:\' -ErrorAction Stop
+            Write-Output "CHANGED_ADDED"
+        }
+      register: defender_result
+      # 告訴 Ansible 什麼情況下才算真的有「變更 (Changed)」
+      changed_when: "'CHANGED_ADDED' in defender_result.stdout"
 
     - name: "[Windows Firewall] 透過標準模組關閉所有區域的防火牆"
       community.windows.win_firewall:
