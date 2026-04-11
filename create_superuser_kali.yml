@@ -6,17 +6,17 @@
   tasks:
     - name: 1. 建立 kali 使用者並設定密碼 (跨平台通用)
       ansible.builtin.user:
-        name: kali2
+        name: kali
         # 這裡的 'kali' 是明文，透過 password_hash 自動轉換為 sha512 雜湊值
-        password: "{{ 'kali2' | password_hash('sha512') }}"
+        password: "{{ 'kali' | password_hash('sha512') }}"
         shell: /bin/bash
         create_home: yes
         state: present
 
     - name: 2. 設定 sudo 免密碼 (實驗室強烈推薦，方便後續自動化)
       ansible.builtin.copy:
-        content: "kali2 ALL=(ALL) NOPASSWD:ALL\n"
-        dest: /etc/sudoers.d/kali2
+        content: "kali ALL=(ALL) NOPASSWD:ALL\n"
+        dest: /etc/sudoers.d/kali
         mode: '0440'
         # 寫入前先用 visudo 檢查語法，避免不小心把系統 sudo 搞壞
         validate: 'visudo -cf %s'
