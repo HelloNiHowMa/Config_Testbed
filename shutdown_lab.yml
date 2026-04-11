@@ -4,7 +4,7 @@
 # ==========================================================
 - name: 1. 關閉所有 Linux 受控機
   # 💡 建議在 inventory.ini 中將所有 Linux 機器設為 [linux] 群組
-  hosts: linux:!ansible_control
+  hosts: Linux:!ansible_control
   become: yes
   gather_facts: no  # 絕對不能開！否則老機器會崩潰
   tasks:
@@ -20,7 +20,7 @@
 # ==========================================================
 - name: 2. 關閉所有 Windows 受控機
   # 💡 建議在 inventory.ini 中將所有 Windows 機器設為 [windows] 群組
-  hosts: windows
+  hosts: Windows
   gather_facts: no
   tasks:
     - name: 通知 Windows 艦隊關機
