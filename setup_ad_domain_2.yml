@@ -1,0 +1,125 @@
+---
+# ==========================================================
+# 劇本一：建置 Active Directory 網域控制站 (DC1)
+# ==========================================================
+- name: Phase 1 - 建立 cyber.internal 網域控制站
+  hosts: win2022_dc
+  gather_facts: no
+  vars:
+    domain_name: "cyber.internal"
+    safe_mode_password: "Pa$$w0rd" 
+
+  tasks:
+    - name: 1. 安裝 AD 網域服務 (AD-Domain-Services)
+      ansible.windows.win_feature:
+        name: AD-Domain-Services
+        state: present
+        include_management_tools: yes
+
+    - name: 2. 升級為網域控制站 (建立新樹系)
+      ansible.windows.win_domain:
+        dns_domain_name: "{{ domain_name }}"
+        safe_mode_password: "{{ safe_mode_password }}"
+      register: domain_install
+
+    - name: 3. 如果有建立新網域，自動重新啟動伺服器
+      ansible.windows.win_reboot:
+        msg: "AD 網域建立完成，正在重新啟動套用設定..."
+        reboot_timeout: 600
+      when: domain_install.changed
+
+# ==========================================================
+# 劇本二：設定 DNS 並將其他 4 台 Client 加入網域
+# ==========================================================
+- name: Phase 2 - 將成員伺服器與用戶端加入網域
+  hosts: Windows_AD:!win2022_dc
+  gather_facts: no
+  vars:
+    domain_name: "cyber.internal"
+    dc_ip: "10.0.0.201"
+    domain_admin: "vagrant@cyber.internal"
+    domain_password: "vagrant"
+
+  tasks:
+    - name: 1. 強制將網卡 DNS 指向 DC1
+      ansible.windows.win_dns_client:
+        adapter_names: "*"
+        ipv4_addresses:
+          - "{{ dc_ip }}"
+          
+    - name: 2. 測試網域解析是否正常
+      ansible.windows.win_shell: "Resolve-DnsName {{ domain_name }}"
+      changed_when: false
+
+    - name: 3. 正式加入 cyber.internal 網域
+      ansible.windows.win_domain_membership:
+        dns_domain_name: "{{ domain_name }}"
+        domain_admin_user: "{{ domain_admin }}"
+        domain_admin_password: "{{ domain_password }}"
+        state: domain
+      register: domain_join
+
+    - name: 4. 加入網域後自動重新啟動
+      ansible.windows.win_reboot:
+        msg: "已成功加入網域，正在重新啟動..."
+        reboot_timeout: 600
+      when: domain_join.reboot_required
+
+# ==========================================================
+# 劇本三：在 DC 建立並下發「全域弱化 GPO」
+# ==========================================================
+- name: Phase 3 - 透過 DC 建立全域解武裝 GPO
+  # 💡 關鍵：這次對象只有 DC1，因為 GPO 是在 DC 上建立的
+  hosts: win2022_dc
+  gather_facts: no
+  
+  tasks:
+    - name: 1. 利用 PowerShell 建立並配置 Vulnerable_Lab_Policy
+      ansible.windows.win_shell: |
+        Import-Module GroupPolicy
+        $gpoName = "Vulnerable_Lab_Policy"
+        $domainTarget = "dc=cyber,dc=internal"
+
+        # 檢查 GPO 是否存在，不存在就新建
+        $gpo = Get-GPO -Name $gpoName -ErrorAction SilentlyContinue
+        if (-not $gpo) {
+            New-GPO -Name $gpoName | Out-Null
+            Write-Output "CHANGED_GPO_CREATED"
+        }
+
+        # 寫入 GPO 登錄檔規則：全面關閉防火牆 (Domain, Private, Public)
+        Set-GPRegistryValue -Name $gpoName -Key "HKLM\Software\Policies\Microsoft\WindowsFirewall\DomainProfile" -ValueName "EnableFirewall" -Type DWord -Value 0 | Out-Null
+        Set-GPRegistryValue -Name $gpoName -Key "HKLM\Software\Policies\Microsoft\WindowsFirewall\PrivateProfile" -ValueName "EnableFirewall" -Type DWord -Value 0 | Out-Null
+        Set-GPRegistryValue -Name $gpoName -Key "HKLM\Software\Policies\Microsoft\WindowsFirewall\StandardProfile" -ValueName "EnableFirewall" -Type DWord -Value 0 | Out-Null
+
+        # 寫入 GPO 登錄檔規則：關閉 Defender 即時防護與間諜軟體防護
+        Set-GPRegistryValue -Name $gpoName -Key "HKLM\Software\Policies\Microsoft\Windows Defender\Real-Time Protection" -ValueName "DisableRealtimeMonitoring" -Type DWord -Value 1 | Out-Null
+        Set-GPRegistryValue -Name $gpoName -Key "HKLM\Software\Policies\Microsoft\Windows Defender" -ValueName "DisableAntiSpyware" -Type DWord -Value 1 | Out-Null
+
+        # 將 GPO 連結到網域根目錄 (讓整個 cyber.internal 都套用)
+        $link = Get-GPLink -Name $gpoName -Target $domainTarget -ErrorAction SilentlyContinue
+        if (-not $link) {
+            New-GPLink -Name $gpoName -Target $domainTarget -LinkEnabled Yes | Out-Null
+            Write-Output "CHANGED_GPO_LINKED"
+        }
+      register: gpo_setup
+      changed_when: "'CHANGED_GPO_CREATED' in gpo_setup.stdout or 'CHANGED_GPO_LINKED' in gpo_setup.stdout"
+
+    - name: 2. 更新 DC 本機群組原則
+      ansible.windows.win_command: gpupdate /force
+      changed_when: false
+
+# ==========================================================
+# 劇本四：強制所有 Client 立即套用 GPO
+# ==========================================================
+- name: Phase 4 - 強制網域成員立即套用弱化 GPO
+  # 💡 鎖定所有非 DC 的網域成員
+  hosts: Windows_AD:!win2022_dc
+  gather_facts: no
+  
+  tasks:
+    - name: 1. 執行 gpupdate /force (避免等待 90 分鐘的預設派發時間)
+      ansible.windows.win_command: gpupdate /force
+      changed_when: false
+      # 忽略可能因為網路瞬斷或防護造成的逾時錯誤
+      ignore_errors: yes
