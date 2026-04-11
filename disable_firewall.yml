@@ -1,6 +1,7 @@
 ---
 - name: 確保 Windows 靶機防火牆永遠處於關閉狀態
   hosts: Windows
+  gather_facts: no # 關閉 facts 收集可以加快執行速度
   tasks:
     - name: 暴力關閉所有防火牆設定檔
       community.windows.win_firewall:
