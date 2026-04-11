@@ -84,18 +84,18 @@ Vagrant.configure("2") do |config|
   config.vm.define "kali" do |kali|
     kali.vm.box = "kalilinux/rolling"
     kali.vm.hostname = "kali-2026-01-231"
-	#不指定網卡，vagrant會用選單，問說要bridge到哪一張網卡
-	#kali.vm.network "public_network"   
+    #不指定網卡，vagrant會用選單，問說要bridge到哪一張網卡
+    #kali.vm.network "public_network"   
     #kali.vm.network "public_network", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-	kali.vm.network "public_network", ip: "#{IP_PREFIX}231", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
-	
+    kali.vm.network "public_network", ip: "#{IP_PREFIX}231", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    
     kali.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Kali"
       vb.memory = "2048"
       vb.cpus = 2
       vb.gui = false
-	  #設定這只有這台是Link Clone
-	  #vb.linked_clone = true 
+      #設定這只有這台是Link Clone
+      #vb.linked_clone = true 
     end
 
     # 在Kali新增kali這個User，並配置好所有權限與金鑰
@@ -132,7 +132,7 @@ Vagrant.configure("2") do |config|
       
       echo ">>> 使用者 kali 環境就緒！"
     SHELL
-	
+    
   end
 
   # ==========================================
@@ -140,9 +140,9 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "ansible_control" do |node|
     # 沿用現有的 Ubuntu 22.04 映像檔
-    node.vm.box = "bento/ubuntu-22.04"
+    node.vm.box = "bento/ubuntu-24.04"
     node.vm.hostname = "ansible-control-232"
-	node.vm.network "public_network", ip: "#{IP_PREFIX}232", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}232", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"
     
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ansible_Control"
@@ -150,11 +150,11 @@ Vagrant.configure("2") do |config|
       vb.cpus = 1
       vb.gui = false
     end
-	
-	# 1. 直接複製「一對」金鑰檔案 (最推薦的標準作法)
+    
+    # 1. 直接複製「一對」金鑰檔案 (最推薦的標準作法)
     node.vm.provision "file", source: "lab_key", destination: "/home/vagrant/.ssh/id_rsa"
     node.vm.provision "file", source: "lab_key.pub", destination: "/home/vagrant/.ssh/id_rsa.pub"
-	
+    
     # 透過 Shell Provisioner 在開機時全自動安裝最新版 Ansible
     node.vm.provision "shell", inline: <<-SHELL
       echo ">>> [系統設定] 正在同步金鑰權限與安裝 Ansible..."     
@@ -168,18 +168,24 @@ Vagrant.configure("2") do |config|
         echo ">>> Ansible 已經安裝過了，跳過安裝流程。"
         ansible --version | head -n 1
       else
-        echo ">>> 偵測到尚未安裝 Ansible，開始執行安裝..."
+        echo ">>> 偵測到尚未安裝 Ansible，開始執行「黃金版本」安裝..."
         export DEBIAN_FRONTEND=noninteractive
         
         apt-get update
-        apt-get install -y software-properties-common
-        apt-add-repository --yes --update ppa:ansible/ansible
-        apt-get install -y ansible
+        
+        # 1. 捨棄 PPA，改裝 Python 官方套件管理員 pip3
+        apt-get install -y python3-pip
         apt-get install -y python3-passlib
-        echo ">>> Ansible 安裝完畢！"
+        
+        # 2. 透過 pip3 強制鎖定安裝 Ansible 9.13.0 (Core 2.16.14)
+        # 💡 加入 --break-system-packages 以突破 Ubuntu 24.04 的系統保護限制
+        pip3 install --ignore-installed "ansible-core==2.16.14" "ansible==9.13.0" --break-system-packages
+        pip3 install --upgrade --ignore-installed "ntlm-auth" "pywinrm" --break-system-packages
+        pip3 install --upgrade --ignore-installed "paramiko" --break-system-packages
+        echo ">>> Ansible 黃金版本 (Core 2.16.14) 安裝完畢！"
       fi
 
-	  # 判斷 .ansible.cfg 是否已經存在
+      # 判斷 .ansible.cfg 是否已經存在
       if [ ! -f /home/vagrant/.ansible.cfg ]; then
         echo ">>> 找不到設定檔，建立全新的 .ansible.cfg 並關閉 Strict Host Key Checking..."
         echo -e "[defaults]\nhost_key_checking = False" > /home/vagrant/.ansible.cfg
@@ -187,16 +193,53 @@ Vagrant.configure("2") do |config|
       else
         echo ">>> .ansible.cfg 已存在，跳過覆蓋動作，保留您的自訂設定。"
       fi
-    SHELL
-	
-	# 💡 新增這段 Shell Provisioner 來安裝工具與 Clone 專案
-    node.vm.provision "shell", inline: <<-SHELL
+    
+      # =========================================================
+      # 💡 關鍵新增：自動喚醒 OpenSSL 的 Legacy 模組 (支援 MD4)
+      # 針對被完全刪除設定的 Ubuntu 24.04 進行強行注入
+      # =========================================================
+      echo ">>> [系統設定] 正在修改 OpenSSL 設定以支援 Windows NTLM 驗證..."
+      cp /etc/ssl/openssl.cnf /etc/ssl/openssl.cnf.bak
+      
+      # 檢查是否已經注入過 (確保冪等性，重複執行也不會壞)
+      if ! grep -q "legacy = legacy_sect" /etc/ssl/openssl.cnf; then
+          # 1. 在 [provider_sect] 下方強行插入 legacy 宣告
+          sed -i '/^\[provider_sect\]/a legacy = legacy_sect' /etc/ssl/openssl.cnf
+          
+          # 2. 將被註解的 activate = 1 解開 (為了啟動 default_sect)
+          sed -i 's/^# activate = 1/activate = 1/' /etc/ssl/openssl.cnf
+          
+          # 3. 在檔案最尾端，追加 [legacy_sect] 的完整設定
+          echo -e "\n[legacy_sect]\nactivate = 1" >> /etc/ssl/openssl.cnf
+          echo ">>> [系統設定] OpenSSL Legacy 模組強行注入成功！"
+      else
+          echo ">>> [系統設定] OpenSSL Legacy 模組已存在，跳過注入。"
+      fi
+      # =========================================================
+      
+    
+      # 💡 新增這段 Shell Provisioner 來安裝工具與 Clone 專案
       echo ">>> [系統設定] 正在更新套件庫並安裝 net-tools 與 git..."
+    
       export DEBIAN_FRONTEND=noninteractive
       
       # 1. 更新 apt 索引並安裝軟體 (-y 代表遇到詢問自動回答 yes)
-      #apt-get update
+      apt-get update
       apt-get install -y net-tools git
+
+      # =========================================================
+      # 💡 關鍵新增：自動喚醒 OpenSSL 的 Legacy 模組 (支援 MD4)
+      # =========================================================
+      #echo ">>> [系統設定] 正在修改 OpenSSL 設定以支援 Windows NTLM 驗證..."
+      # 備份原檔，養成好習慣
+      #cp /etc/ssl/openssl.cnf /etc/ssl/openssl.cnf.bak
+      # 1. 解開 provider 區段的 legacy 宣告
+      #sed -i 's/^# legacy = legacy_sect/legacy = legacy_sect/' /etc/ssl/openssl.cnf
+      # 2. 解開 [legacy_sect] 標籤
+      #sed -i 's/^# \[legacy_sect\]/\[legacy_sect\]/' /etc/ssl/openssl.cnf
+      # 3. 精準解開 [legacy_sect] 下一行的 activate = 1
+      #sed -i '/^\[legacy_sect\]/{n;s/^# activate = 1/activate = 1/}' /etc/ssl/openssl.cnf
+      # =========================================================
 
       echo ">>> [系統設定] 正在從 GitHub Clone 專案..."
       
@@ -229,7 +272,7 @@ Vagrant.configure("2") do |config|
       vb.cpus = 1
       vb.gui = false
     end
-	
+    
   end
 
   # ==========================================
@@ -309,11 +352,11 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-	
-    # 第一階段：改名與斬斷視窗
+    
+    
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
@@ -322,7 +365,6 @@ Vagrant.configure("2") do |config|
 
     SHELL
 
-    #  關鍵順序：先重開機！讓 Windows 重新判定網路完畢
     node.vm.provision :reload
  
   end
@@ -341,19 +383,18 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-	
-    # 第一階段：改名與斬斷視窗
+    
+    
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
-      Write-Host ">>> [System] Renaming computer to win10-alone-238..."
+      Write-Host ">>> [System] Renaming computer to win11-alone-239..."
       Rename-Computer -NewName win11-alone-239 -Force
     SHELL
 
-    # 💡 關鍵順序：先重開機！讓 Windows 重新判定網路完畢
     node.vm.provision :reload
   
   end
@@ -373,10 +414,10 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-			# 第一階段：改名與斬斷視窗
+            
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
@@ -403,11 +444,11 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-	
-		# 第一階段：改名與斬斷視窗
+    
+        
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
@@ -417,7 +458,7 @@ Vagrant.configure("2") do |config|
 
     # 💡 關鍵順序：先重開機！讓 Windows 重新判定網路完畢
     node.vm.provision :reload
-	
+    
   end
 
   # ==========================================
@@ -434,11 +475,11 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-	
-	# 第一階段：改名與斬斷視窗
+    
+    
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
@@ -448,7 +489,7 @@ Vagrant.configure("2") do |config|
 
     # 💡 關鍵順序：先重開機！讓 Windows 重新判定網路完畢
     node.vm.provision :reload
-	
+    
   end
 
   # ==========================================
@@ -466,11 +507,11 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-	
-	# 第一階段：改名與斬斷視窗
+    
+    
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
@@ -498,11 +539,11 @@ Vagrant.configure("2") do |config|
       vb.cpus = 2
       vb.gui = false
     end
-	
-	# 第一階段：改名與斬斷視窗
+    
+    
     node.vm.provision "shell", inline: <<-'SHELL'
       Write-Host ">>> [System] Disabling Network Discovery popup..."
-	  $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
+      $regPath = "HKLM:\System\CurrentControlSet\Control\Network\NewNetworkWindowOff"
       if (!(Test-Path $regPath)) {
           New-Item -Path $regPath -Force | Out-Null
       }
@@ -513,10 +554,10 @@ Vagrant.configure("2") do |config|
     # 💡 關鍵順序：先重開機！讓 Windows 重新判定網路完畢
     node.vm.provision :reload
 
-	
+    
   end
  
-		
+        
   # ==========================================
   # 節點 15: Ubuntu 12.04 (靶機 9 - 極度老舊漏洞環境，如 bWAPP 原生相容)
   # ==========================================
