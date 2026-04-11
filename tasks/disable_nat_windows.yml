@@ -17,6 +17,17 @@
         # 建立新的預設閘道
         New-NetRoute -InterfaceIndex $idx -DestinationPrefix "0.0.0.0/0" -NextHop "{{ lab_gateway }}" -ErrorAction SilentlyContinue
         Write-Output ">>> 路由與 DNS 設定完成"
+
+        # ==========================================
+        # 💡 關鍵新增：將此網卡切換為 Private
+        # ==========================================
+        # ⏳ 護城河：給 Windows NLA 服務 2 秒鐘的時間，讓它意識到「Gateway 已經設定好了，這不再是未辨識網路」
+        Start-Sleep -Seconds 10
+        
+        # 利用剛剛找到的 $idx，精準打擊，切換為 Private
+        Set-NetConnectionProfile -InterfaceIndex $idx -NetworkCategory Private -ErrorAction SilentlyContinue
+        
+        Write-Output ">>> 路由、DNS 與 Private 網路設定完成"
     }
 
     # 2. 處理 NAT 網路 (10.0.2.x)
