@@ -655,8 +655,8 @@ Vagrant.configure("2") do |config|
   # ==========================================
   config.vm.define "ubuntu18" do |node|
     node.vm.box = "bento/ubuntu-18.04"
-    node.vm.hostname = "ubuntu18-240"
-    node.vm.network "public_network", ip: "#{IP_PREFIX}240", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"    
+    node.vm.hostname = "ubuntu18-241"
+    node.vm.network "public_network", ip: "#{IP_PREFIX}241", bridge: "Intel(R) Wi-Fi 6E AX211 160MHz"    
     node.vm.provider "virtualbox" do |vb|
       vb.name = "Testbed_Ubuntu18"
       vb.memory = "1024"
