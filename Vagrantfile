@@ -62,7 +62,7 @@ Vagrant.configure("2") do |config|
   # ==========================================
   # 建立 Linux 靶機清單，精準派發 SSH 公鑰 
   # ==========================================
-  linux_vms = ["kali", "centos", "rocky9", "ubuntu20", "ubuntu22", "ubuntu24", "ansible_control", "ubuntu12", "ubuntu14"]
+  linux_vms = ["kali", "centos", "rocky9", "ubuntu20", "ubuntu22", "ubuntu24", "ansible_control", "ubuntu12", "ubuntu14", "ubuntu18"]
 
   linux_vms.each do |vm_name|
     config.vm.define vm_name do |node|
